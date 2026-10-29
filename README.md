@@ -9,6 +9,12 @@ test tree, request form, simultaneous Body/Load editors, right-hand live cards a
 bottom graphs/logs. Both Studio layouts share the same plan and engine.
 See [Studio 2](docs/studio2.md) for behavior and screenshots.
 
+Studio 2 now includes **personal widget layouts**: hide/restore, drag to reorder,
+move between docks, adjust grid widths, and save named pages. Create a blank
+dashboard-only page to build an analytics screen from the seven-widget catalog.
+Start with **Edit layout**, **+ Widget** or **Layouts…**, then **Save layout**.
+See [widgets and personal pages](docs/widgets.md).
+
 ## Run
 
 Install Rust with [rustup](https://rustup.rs). From this checkout:

@@ -11,68 +11,19 @@ enum RequestAction {
 
 impl RustLoadApp {
     pub(super) fn studio2(&mut self, ctx: &egui::Context, p: Palette) {
-        let compact = ctx.content_rect().width() < 1150.0;
-        // Draw this before the side panels so analytics span the entire workbench.
-        egui::TopBottomPanel::bottom("studio2_analytics")
-            .resizable(true)
-            .default_height(255.0)
-            .height_range(170.0..=450.0)
-            .show(ctx, |ui| {
-                let panel_height = ui.available_height();
-                ui.set_min_height(panel_height);
-                let height = (panel_height - 110.0).max(40.0);
-                if ui.available_width() >= 1200.0 {
-                    ui.columns(3, |columns| {
-                        chart(&mut columns[0], &self.live, p, Chart::Throughput, height);
-                        chart(&mut columns[1], &self.live, p, Chart::Latency, height);
-                        egui::ScrollArea::both()
-                            .id_salt("studio2_logs_container")
-                            .max_height(panel_height - 8.0)
-                            .show(&mut columns[2], |ui| self.logs_for(ui, p, true));
-                    });
-                } else {
-                    ui.horizontal(|ui| {
-                        for (i, label) in ["Throughput", "Latency", "Recent Events / Logs"]
-                            .iter()
-                            .enumerate()
-                        {
-                            ui.selectable_value(&mut self.studio2_bottom_tab, i, *label);
-                        }
-                    });
-                    match self.studio2_bottom_tab {
-                        0 => chart(ui, &self.live, p, Chart::Throughput, height - 25.0),
-                        1 => chart(ui, &self.live, p, Chart::Latency, height - 25.0),
-                        _ => {
-                            egui::ScrollArea::both()
-                                .id_salt("studio2_small_logs")
-                                .show(ui, |ui| self.logs_for(ui, p, true));
-                        }
-                    }
-                }
-            });
-
-        self.studio2_tree(ctx, p);
-        if !compact {
-            egui::SidePanel::right("studio2_metrics")
-                .resizable(true)
-                .default_width(315.0)
-                .width_range(275.0..=420.0)
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("studio2_metrics_scroll")
-                        .show(ui, |ui| self.studio2_metrics(ui, p));
-                });
+        if self.prefs.dashboards.active().dashboard_only {
+            self.dashboard_canvas(ctx, p);
+            return;
         }
+        let compact = ctx.content_rect().width() < 1150.0;
+        self.dashboard_bottom(ctx, p);
+        self.studio2_tree(ctx, p);
+        self.dashboard_right(ctx, p, compact);
 
         let busy = self.busy();
         egui::CentralPanel::default().show(ctx, |ui| {
             if compact {
-                egui::CollapsingHeader::new("Live Metrics").show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("studio2_compact_metrics")
-                        .max_height((ui.available_height() * 0.45).clamp(80.0, 220.0))
-                        .show(ui, |ui| self.studio2_metrics(ui, p));
-                });
+                self.dashboard_compact_right(ui, p);
             }
             let before = format!("{:?}", self.plan);
             if self.plan_settings {
@@ -207,7 +158,7 @@ impl RustLoadApp {
         }
     }
 
-    fn studio2_metrics(&self, ui: &mut egui::Ui, p: Palette) {
+    pub(super) fn studio2_metrics(&self, ui: &mut egui::Ui, p: Palette) {
         ui.horizontal_wrapped(|ui| {
             ui.strong("Live Metrics");
             ui.colored_label(

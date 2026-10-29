@@ -1,4 +1,5 @@
 pub mod core;
+pub mod dashboard;
 pub mod engine;
 pub mod fixture;
 pub mod metrics;

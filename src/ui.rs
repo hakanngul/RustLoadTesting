@@ -1,4 +1,7 @@
+mod dashboard;
 mod studio2;
+
+use crate::dashboard::{DashboardPage, Dashboards, Dock, Span, Widget, WidgetKind};
 
 use crate::{
     core::*,
@@ -23,6 +26,8 @@ struct Preferences {
     plan_path: String,
     #[serde(default)]
     workspace: Workspace,
+    #[serde(default)]
+    dashboards: Dashboards,
 }
 #[derive(Default, PartialEq, Clone, Copy, Serialize, Deserialize)]
 enum Workspace {
@@ -67,7 +72,11 @@ pub struct RustLoadApp {
     pending_new: bool,
     close_dialog: bool,
     chart_latency: bool,
-    studio2_bottom_tab: usize,
+    studio2_bottom_tab: Option<u64>,
+    layout_manager_open: bool,
+    layout_edit: bool,
+    new_layout_name: String,
+    layout_save_requested: bool,
     studio2_load_tab: bool,
     closing: bool,
     permit_close: bool,
@@ -78,10 +87,11 @@ pub struct RustLoadApp {
 }
 impl RustLoadApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let prefs: Preferences = cc
+        let mut prefs: Preferences = cc
             .storage
             .and_then(|s| eframe::get_value(s, "rustload-preferences"))
             .unwrap_or_default();
+        prefs.dashboards.normalize();
         let workspace = prefs.workspace;
         let mut app = Self {
             plan: TestPlan::default(),
@@ -117,7 +127,11 @@ impl RustLoadApp {
             pending_new: false,
             close_dialog: false,
             chart_latency: false,
-            studio2_bottom_tab: 0,
+            studio2_bottom_tab: None,
+            layout_manager_open: false,
+            layout_edit: false,
+            new_layout_name: String::new(),
+            layout_save_requested: false,
             studio2_load_tab: false,
             closing: false,
             permit_close: false,
@@ -407,6 +421,9 @@ impl RustLoadApp {
                         }
                         self.file_action = Some(FileAction::Export);
                         self.dialog_path = "rustload-report.html".into();
+                    }
+                    if self.workspace == Workspace::Studio2 {
+                        self.dashboard_toolbar(ui, p);
                     }
                     ui.label(
                         RichText::new(if self.dirty { "Unsaved changes" } else { "" })
@@ -1012,7 +1029,7 @@ impl RustLoadApp {
     }
 }
 impl eframe::App for RustLoadApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.resource_sample.elapsed() >= Duration::from_secs(1) {
             let pid = sysinfo::Pid::from_u32(std::process::id());
             self.system
@@ -1110,6 +1127,17 @@ impl eframe::App for RustLoadApp {
             }
         }
         self.dialogs(ctx);
+        self.dashboard_manager(ctx, p);
+        if self.layout_save_requested {
+            if let Some(storage) = frame.storage_mut() {
+                eframe::set_value(storage, "rustload-preferences", &self.prefs);
+                storage.flush();
+                self.message = "Layout saved on this device.".into();
+            } else {
+                self.message = "Persistent UI storage is unavailable in this session.".into();
+            }
+            self.layout_save_requested = false;
+        }
         ctx.request_repaint_after(Duration::from_millis(if self.busy() { 100 } else { 500 }));
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

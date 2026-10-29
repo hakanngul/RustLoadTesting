@@ -1,5 +1,26 @@
 # Validation evidence
 
+## Personal widget layouts update
+
+Current suite: **26 passed** (9 core/report, 9 dashboard-layout, 8 real HTTP engine
+integration tests), zero failures. Format, strict all-target Clippy and build pass.
+Layout tests cover hidden/restored docks, cross-dock moves, global dashboard order,
+preserved workbench assignments, independent named pages, serialization of widths
+and hidden state, non-reused IDs, normalization, catalog limits and grid packing.
+
+Native Linux/Xvfb checks loaded legacy preferences, hid latency and the right KPI
+group, and dragged logs before throughput. Remaining tiles filled the freed space.
+Created and saved a `Performance` dashboard-only page, added catalog widgets,
+changed visibility while a local HTTP run was Running, and observed completion:
+**584 real requests, zero failures**. The preceding local run completed 580 with
+zero failures. Save layout flushed immediately; after restarting, both named
+pages, active page, hidden widgets and order were retained. Hiding every bottom
+widget removed the dock entirely; Restore default widgets reinstated it.
+
+Screenshots are linked in [widgets.md](widgets.md). Layouts contain no test/request
+data. The engine and measurement contract are unchanged. macOS UI execution and
+remote CI results remain separate from these local checks.
+
 ## Studio 2 update
 
 The alternative Studio 2 workbench was added alongside the original Studio and

@@ -14,6 +14,11 @@ Metrics are recorded before publishing; dropping a UI snapshot cannot lose count
 One-second aggregates are emitted to a bounded persistence channel; a dedicated
 storage thread writes them to SQLite. Final summaries are also persisted.
 
+Personal dashboards are a separate serializable model (`dashboard.rs`), stored in
+eframe preferences rather than TestPlan or SQLite run configuration. Stable page
+and widget IDs isolate plot state. Studio 2 renders the same current-run widgets
+in optional docks or a dashboard-only grid. Layout edits never mutate engine state.
+
 Safety: explicit target acknowledgement; HTTP(S) only; no redirects, retries or
 cookie jar; bounded body reads; shared pacing; cancellable waits; graceful stop.
 Secret values are session-only and are removed from plans and result snapshots.
