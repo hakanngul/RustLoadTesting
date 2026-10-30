@@ -582,6 +582,20 @@ pub fn validate_url(input: &str) -> Result<url::Url, String> {
 }
 
 impl TestPlan {
+    /// Reads a saved plan file (at most 16 MiB, current schema only).
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+        if meta.len() > 16 * 1024 * 1024 {
+            return Err("Plan exceeds 16 MiB".into());
+        }
+        let plan: TestPlan =
+            serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        if plan.schema_version != SCHEMA_VERSION {
+            return Err("Unsupported schema version; no automatic migration available".into());
+        }
+        Ok(plan)
+    }
     pub fn validate(&self, base: &Path) -> Result<(), String> {
         if self.schema_version != SCHEMA_VERSION {
             return Err("Unsupported plan schema version".into());

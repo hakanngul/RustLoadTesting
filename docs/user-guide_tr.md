@@ -278,8 +278,7 @@ variable reference".
 - **Save** geçerli dosyaya yazar; dosya yoksa bir yol sorar (varsayılan
   `rustload-plan.json`). **Save as…** her zaman sorar. Var olan bir yola
   kaydetmek o dosyanın yerine yazar. **+ New** ve **Local Demo** geçerli yolu
-  temizler, ama uygulamayı yeniden başlatmak temizlemez (bkz.
-  [Tema, tercihler ve kısayollar](#11-tema-tercihler-ve-kısayollar)).
+  temizler; sonraki **Save** yeni bir yol sorar.
 - **Open** bir dosya yolu ister. En fazla 16 MiB boyutunda, şema sürümü 1 olan
   planlar açılabilir.
 - **+ New** boş bir plan açar. Kaydedilmemiş değişiklik varsa **Unsaved plan**
@@ -737,9 +736,11 @@ konumlandırma yoktur.
 - Oturumlar arasında hatırlananlar: tema, son çalışma alanı, son planın yolu,
   dashboard sayfaları ve karşılaştırmadaki gürültü bandı. Bu tercihler plan,
   istek veya kimlik bilgisi içermez.
-- Uygulama her zaman yeni ve boş bir planla açılır, ama son planın yolunu
-  hatırlar. **Save** (ve Ctrl+S) sormadan o yola yazar. Eski dosyanızı korumak
-  için önce onu **Open** ile açın ya da yeni plan için **Save as…** kullanın.
+- Uygulama açılırken en son kaydettiğiniz veya açtığınız planı yeniden açar
+  (**Open**'da olduğu gibi secret'ları ve oturumluk gövdeleri yeniden girmeniz
+  gerekir). Dosya silinmiş ya da okunamıyorsa yeni bir planla başlar ve yolu
+  unutur; böylece **Save** hiçbir dosyanın üzerine yazmadan nereye
+  kaydedileceğini sorar.
 
 | Kısayol | İşlev |
 | --- | --- |

@@ -192,7 +192,24 @@ impl RustLoadApp {
         };
         theme::apply(&cc.egui_ctx, !app.prefs.light);
         app.refresh_history();
+        app.restore_last_plan();
         app
+    }
+    /// The remembered plan path must always match the plan on screen, or
+    /// Save would overwrite that file with an unrelated plan. Reopen the
+    /// remembered plan; if it cannot be read, forget the path.
+    fn restore_last_plan(&mut self) {
+        if self.prefs.plan_path.is_empty() {
+            return;
+        }
+        let path = self.prefs.plan_path.clone();
+        if let Err(e) = self.open_plan(&path) {
+            self.prefs.plan_path.clear();
+            if Path::new(&path).exists() {
+                self.message =
+                    format!("Could not reopen the last plan ({e}); starting a new plan.");
+            }
+        }
     }
     fn busy(&self) -> bool {
         self.run.is_some() && !self.live.state.terminal()
@@ -244,16 +261,7 @@ impl RustLoadApp {
         Ok(())
     }
     fn open_plan(&mut self, path: &str) -> Result<(), String> {
-        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
-        if meta.len() > 16 * 1024 * 1024 {
-            return Err("Plan exceeds 16 MiB".into());
-        }
-        let plan: TestPlan =
-            serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
-        if plan.schema_version != SCHEMA_VERSION {
-            return Err("Unsupported schema version; no automatic migration available".into());
-        }
+        let plan = TestPlan::load(Path::new(path))?;
         self.plan = plan;
         self.selected = 0;
         self.dirty = false;

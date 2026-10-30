@@ -915,3 +915,29 @@ fn secret_fields_keep_whole_variable_references_only() {
         assert!(!redacted.contains(literal), "{literal} in history");
     }
 }
+
+#[test]
+fn saved_plans_load_and_bad_files_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("plan.json");
+    let plan = TestPlan {
+        name: "Checkout".into(),
+        ..TestPlan::default()
+    };
+    std::fs::write(&path, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
+    assert_eq!(TestPlan::load(&path).unwrap().name, "Checkout");
+    // A missing file is an error, so the app forgets the remembered path.
+    assert!(TestPlan::load(&dir.path().join("gone.json")).is_err());
+    let mut json = serde_json::to_value(&plan).unwrap();
+    json["schema_version"] = 99.into();
+    std::fs::write(&path, json.to_string()).unwrap();
+    assert!(TestPlan::load(&path).unwrap_err().contains("schema"));
+    std::fs::write(&path, "not json").unwrap();
+    assert!(TestPlan::load(&path).is_err());
+    let big = dir.path().join("big.json");
+    std::fs::File::create(&big)
+        .unwrap()
+        .set_len(16 * 1024 * 1024 + 1)
+        .unwrap();
+    assert!(TestPlan::load(&big).unwrap_err().contains("16 MiB"));
+}

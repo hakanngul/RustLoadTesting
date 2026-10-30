@@ -268,9 +268,8 @@ reference".
 
 - **Save** writes to the current file; if there is none it asks for a path
   (default `rustload-plan.json`). **Save as…** always asks. Saving to an
-  existing path replaces the file. Note that **+ New** and **Local Demo** clear
-  the current path, but a restart does not (see
-  [Theme, preferences and shortcuts](#11-theme-preferences-and-shortcuts)).
+  existing path replaces the file. **+ New** and **Local Demo** clear the
+  current path, so the next **Save** asks for one.
 - **Open** asks for a file path. Plans up to 16 MiB with schema version 1 can be
   opened.
 - **+ New** starts an empty plan. If there are unsaved changes, the
@@ -716,9 +715,10 @@ and free positioning are not available.
 - Remembered between sessions: theme, last workspace, the last plan path,
   dashboard pages and the comparison noise band. These preferences contain no
   plan, request or credential data.
-- The app always starts with a new, empty plan, but it keeps the last plan's
-  path. **Save** (and Ctrl+S) writes to that path without asking. To keep your
-  old file, **Open** it first, or use **Save as…** for the new plan.
+- On start the app reopens the last plan you saved or opened (re-enter its
+  secrets and session-only bodies, as after **Open**). If that file is gone or
+  can't be read, the app starts with a new plan and forgets the path, so
+  **Save** asks where to save instead of overwriting anything.
 
 | Shortcut | Action |
 | --- | --- |
