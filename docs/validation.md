@@ -1,5 +1,34 @@
 # Validation evidence
 
+## cURL / HAR import update
+
+**Import…** (toolbar, shared by Studio and Studio 2) parses pasted
+Copy-as-cURL commands or a HAR file, previews requests and warnings, and adds
+them to the plan or replaces its requests. Replacing removes request-scoped SLO
+thresholds because IDs restart. Also fixes the comparison hover text, which used
+an arrow glyph the bundled font lacks.
+
+- `tests/import.rs` (6 tests): Chrome multi-line bash output (query to Params,
+  secret token/Authorization/Cookie, Accept-Encoding and Content-Type dropped,
+  JSON body); `$'…'` with `\'` and `\u00e9`; double quotes; repeated `-d`;
+  Firefox `-X PUT`; attached short options and `--name=value`; `-G`; `-u` and URL
+  credentials (percent-decoded); `--json`; `--data-urlencode`; "Copy all" with
+  `;` separators, HEAD skipped, `-k`/`-L`/`-F`/unknown options reported, non-curl
+  text ignored; the 500-request limit; imported plans validate and never save
+  credentials; HAR order, XHR/fetch filter, pseudo-headers, form params, non-HTTP
+  and OPTIONS entries.
+- `imported_curl_requests_reach_the_server_as_written`: three imported commands
+  run against the fixture `/echo`; assertions confirm the custom header, the JSON
+  content type and the raw body arrived; zero failures.
+- Native Linux/Xvfb: imported a curl command (Replace) against the fixed-port
+  fixture: Params, masked Authorization, removed Content-Type/Accept-Encoding,
+  `-k` warning; ran it with 0 % errors. In Studio 2 (Light) imported a HAR file
+  (Add): document entry skipped, two requests appended. Rechecked the dialog
+  label and path-only request names after the fixes.
+
+Suite: **47 passed** (5 compare, 14 core/report, 9 dashboard-layout, 13 engine,
+6 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## Run comparison update
 
 Monitor's history cards gain a UTC start time, **Baseline** (pin) and **Compare**.

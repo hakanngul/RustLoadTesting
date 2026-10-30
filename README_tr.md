@@ -216,6 +216,29 @@ etkinleştirilir; aynı sütun adı birden fazla kez bulunamaz. Göreli CSV yoll
 kaydedilmiş planın bulunduğu dizine göre çözülür. Plan henüz kaydedilmediyse
 uygulama işleminin çalışma dizini esas alınır.
 
+### cURL veya HAR'dan içe aktarma
+
+Araç çubuğundaki **Import…**, istekleri tarayıcınızdan oluşturur. DevTools'ta
+*Copy as cURL (bash)* (veya *Copy all as cURL*) ile kopyaladığınız bir ya da
+daha fazla komutu yapıştırın veya DevTools → Network → *Save all as HAR* ile
+kaydettiğiniz HAR dosyasının yolunu verin. İstekleri ve uyarıları önizleyip
+plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
+
+- URL'deki sorgu parametreleri Params'a taşınır; URL içindeki kimlik bilgileri
+  Basic Auth'a dönüşür.
+- `-H`, `-X`, `-d`/`--data-raw`/`--data-binary`/`--data-urlencode`, `--json`,
+  `-u`, `-G`, `-b`, `-A`, `-e` ve `--url` desteklenir. JSON içerik türüne sahip
+  JSON gövdeler JSON gövde olarak alınır.
+- Bağlantı header'ları, `Content-Length` ve `Accept-Encoding` kaldırılır:
+  yanıtlar sıkıştırılmadan okunur, böylece boyutlar ve extraction doğru kalır.
+- `-k`, `-L`, `-F`, `-T`, `@dosya` verileri ve HEAD/OPTIONS istekleri alınmaz;
+  önizleme neyin neden atlandığını listeler.
+- HAR içe aktarma yalnızca XHR/fetch isteklerini tutabilir. Sadece istekler
+  okunur, HAR'daki yanıtlar hiçbir zaman içe aktarılmaz. En fazla 50 MiB dosya
+  ve 500 istek.
+- Authorization, Cookie ve diğer kimlik bilgisi değerleri secret olarak
+  işaretlenir: mevcut oturumda çalışır ama diğer secret'lar gibi asla kaydedilmez.
+
 ### SLO eşikleri
 
 Başarılı/başarısız hedeflerini Studio'da **Users & plan settings**, Studio 2'de

@@ -458,3 +458,37 @@ fn saved_runs_can_be_compared() {
     );
     assert!(throughput.base.unwrap() > 0.0 && throughput.candidate.unwrap() > 0.0);
 }
+
+#[test]
+fn imported_curl_requests_reach_the_server_as_written() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let base = format!("http://{}/echo", server.address);
+    let text = format!(
+        "curl '{base}?q=1' -H 'X-Custom: yes' -H 'accept-encoding: gzip' ;\n\
+         curl '{base}' -X PUT -H 'content-type: application/json' --data-raw '{{\"x\":1}}' ;\n\
+         curl '{base}' --data-raw 'plain'"
+    );
+    let mut imported = rustload::import::from_curl(&text, 1).unwrap();
+    let expect = |pointer: &str, value: &str| Assertions {
+        json_pointer: pointer.into(),
+        json_expected: value.into(),
+        ..Assertions::default()
+    };
+    imported.requests[0].assertions = expect("/request/custom", "\"yes\"");
+    imported.requests[1].assertions = expect("/request/content_type", "\"application/json\"");
+    imported.requests[2].assertions = expect("/request/body", "\"plain\"");
+    let mut plan = TestPlan {
+        requests: imported.requests,
+        ..TestPlan::default()
+    };
+    plan.load.users = 1;
+    plan.load.duration_secs = 1;
+    plan.load.rps_limit = 30;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    assert_eq!(s.counts.failed, 0, "{:?}", s.logs);
+    assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
+}

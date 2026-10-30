@@ -165,7 +165,7 @@ fn endpoint_table(ui: &mut egui::Ui, comparison: &Comparison, p: Palette) {
                             if let Some(d) = e.deltas.iter().find(|d| d.metric == m) {
                                 ui.colored_label(change_color(d.change, p), change_label(d))
                                     .on_hover_text(format!(
-                                        "{} → {}",
+                                        "{} to {}",
                                         value_label(m, d.base),
                                         value_label(m, d.candidate)
                                     ));
