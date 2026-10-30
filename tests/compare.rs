@@ -147,3 +147,25 @@ fn run_ids_show_their_utc_start_time() {
     assert_eq!(run_time_label("951782400000000000"), "2000-02-29 00:00 UTC");
     assert_eq!(run_time_label("not-a-run"), "");
 }
+
+#[test]
+fn throughput_uses_the_measured_window_and_warmup_changes_warn() {
+    let base_plan = TestPlan::default();
+    let mut candidate_plan = TestPlan::default();
+    candidate_plan.load.warmup = Warmup::Duration { secs: 5 };
+    let base = run(1000, 0, 100.0, 10.0);
+    // Same 1000 measured requests, but only in the 5 s after warmup: twice the rate.
+    let candidate = Snapshot {
+        measured_from: 5.0,
+        warmup: Warmup::Duration { secs: 5 },
+        ..run(1000, 0, 100.0, 10.0)
+    };
+    let c = compare(&base, &base_plan, &candidate, &candidate_plan, 2.0);
+    let t = row(&c, CompareMetric::Throughput);
+    assert_eq!((t.base, t.candidate), (Some(100.0), Some(200.0)));
+    assert!(
+        c.warnings
+            .iter()
+            .any(|w| w == "Warmup differs: none vs first 5s")
+    );
+}

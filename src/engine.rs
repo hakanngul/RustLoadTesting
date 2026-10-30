@@ -1,12 +1,15 @@
 use crate::{
-    core::{self, AuthKind, Profile, Request, TestPlan, Variables},
+    core::{self, AuthKind, Profile, Request, TestPlan, Variables, Warmup},
     metrics::*,
     storage::History,
 };
 use base64::Engine as _;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -94,6 +97,25 @@ struct Context {
     force: CancellationToken,
     began: Instant,
     deadline: Instant,
+    /// Request starts so far, for request-count warmup.
+    starts: Arc<AtomicU64>,
+}
+
+/// Marks the measured window: warmup setting, where measurement starts and
+/// whether warmup is still running.
+fn mark_warmup(s: &mut Snapshot, warmup: Warmup, ended_at: Option<f64>) {
+    s.warmup = warmup;
+    (s.measured_from, s.warming_up) = match warmup {
+        Warmup::None => (0.0, false),
+        Warmup::Duration { secs } => {
+            let secs = secs as f64;
+            (secs.min(s.elapsed), s.elapsed < secs)
+        }
+        Warmup::Requests { .. } => match ended_at {
+            Some(at) => (at, false),
+            None => (s.elapsed, true),
+        },
+    };
 }
 
 async fn coordinate(
@@ -154,6 +176,7 @@ async fn coordinate(
             force: force.clone(),
             began,
             deadline: began + Duration::from_secs(plan.load.duration_secs),
+            starts: Arc::new(AtomicU64::new(0)),
         };
         for user in 0..plan.load.users {
             let c = context.clone();
@@ -218,7 +241,11 @@ async fn coordinate(
             }
             sequence += 1;
         }
-        let mut snapshot = metrics.lock().expect("metrics lock").snapshot(elapsed);
+        let (mut snapshot, ended_at) = {
+            let m = metrics.lock().expect("metrics lock");
+            (m.snapshot(elapsed), m.warmup_ended_at)
+        };
+        mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
         snapshot.run_id.clone_from(&id);
         snapshot.name.clone_from(&plan.name);
         snapshot.target_users = plan.load.users;
@@ -241,7 +268,12 @@ async fn coordinate(
             {
                 persistence_failed = true;
             }
-            snapshot = metrics.lock().expect("metrics lock").snapshot(elapsed);
+            let ended_at = {
+                let m = metrics.lock().expect("metrics lock");
+                snapshot = m.snapshot(elapsed);
+                m.warmup_ended_at
+            };
+            mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
             snapshot.run_id.clone_from(&id);
             snapshot.name.clone_from(&plan.name);
             snapshot.target_users = plan.load.users;
@@ -285,15 +317,28 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
             if !permit(&c).await {
                 break 'scenario;
             }
+            // Classified by start: a warmup request stays warmup even if it ends later.
+            let warm = match c.plan.load.warmup {
+                Warmup::None => false,
+                Warmup::Duration { secs } => c.began.elapsed() < Duration::from_secs(secs),
+                Warmup::Requests { count } => c.starts.fetch_add(1, Ordering::Relaxed) < count,
+            };
             {
                 let mut m = c.metrics.lock().expect("metrics lock");
-                m.counts.started += 1;
-                m.endpoints
-                    .get_mut(&request.id)
-                    .expect("endpoint")
-                    .summary
-                    .counts
-                    .started += 1;
+                if warm {
+                    m.warmup.started += 1;
+                } else {
+                    if c.plan.load.warmup != Warmup::None && m.warmup_ended_at.is_none() {
+                        m.warmup_ended_at = Some(c.began.elapsed().as_secs_f64());
+                    }
+                    m.counts.started += 1;
+                    m.endpoints
+                        .get_mut(&request.id)
+                        .expect("endpoint")
+                        .summary
+                        .counts
+                        .started += 1;
+                }
             }
             let started = Instant::now();
             let result = tokio::select! {
@@ -345,7 +390,16 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
                 }
             }
             let mut m = c.metrics.lock().expect("metrics lock");
-            if let Ok((status, _, _)) = &result {
+            let success = result.is_ok() && !assertion_failed && !status_failed;
+            if warm {
+                apply_count(
+                    &mut m.warmup,
+                    &result,
+                    success,
+                    assertion_failed,
+                    status_failed,
+                );
+            } else if let Ok((status, _, _)) = &result {
                 let _ = m.total.record(elapsed_us);
                 let _ = m.bucket.record(elapsed_us);
                 *m.statuses.entry(*status).or_default() += 1;
@@ -356,30 +410,26 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
                     .histogram
                     .record(elapsed_us);
             }
-            let success = result.is_ok() && !assertion_failed && !status_failed;
-            apply_count(
-                &mut m.counts,
-                &result,
-                success,
-                assertion_failed,
-                status_failed,
-            );
-            apply_count(
-                &mut m
-                    .endpoints
-                    .get_mut(&request.id)
-                    .expect("endpoint")
-                    .summary
-                    .counts,
-                &result,
-                success,
-                assertion_failed,
-                status_failed,
-            );
-            if !success || m.counts.completed.is_multiple_of(100) {
+            if !warm {
+                record_counts(
+                    &mut m,
+                    request.id,
+                    &result,
+                    success,
+                    assertion_failed,
+                    status_failed,
+                );
+            }
+            let logged = if warm {
+                m.warmup.completed
+            } else {
+                m.counts.completed
+            };
+            if !success || logged.is_multiple_of(100) {
                 let label = match &result {
                     Ok((status, _, _)) => format!(
-                        "Request #{} · HTTP {} · {} · {:.1} ms",
+                        "{}Request #{} · HTTP {} · {} · {:.1} ms",
+                        if warm { "Warmup · " } else { "" },
                         request.id,
                         status,
                         if success {
@@ -389,7 +439,12 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
                         },
                         elapsed_us as f64 / 1000.0
                     ),
-                    Err(e) => format!("Request #{} · {}", request.id, e.label()),
+                    Err(e) => format!(
+                        "{}Request #{} · {}",
+                        if warm { "Warmup · " } else { "" },
+                        request.id,
+                        e.label()
+                    ),
                 };
                 m.log(
                     c.began.elapsed().as_secs_f64(),
@@ -409,6 +464,26 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
         }
     }
     c.metrics.lock().expect("metrics lock").users -= 1;
+}
+
+/// Counts a measured (non-warmup) result for the run and its endpoint.
+fn record_counts(
+    m: &mut Accumulator,
+    id: u64,
+    result: &Result<(u16, Vec<u8>, u64), Failure>,
+    success: bool,
+    assertion_failed: bool,
+    status_failed: bool,
+) {
+    apply_count(
+        &mut m.counts,
+        result,
+        success,
+        assertion_failed,
+        status_failed,
+    );
+    let endpoint = &mut m.endpoints.get_mut(&id).expect("endpoint").summary.counts;
+    apply_count(endpoint, result, success, assertion_failed, status_failed);
 }
 
 /// Schedule lag the gate may catch up on. Covers timer wake-up rounding without

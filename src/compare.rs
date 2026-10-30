@@ -160,9 +160,9 @@ fn deltas(
 }
 
 /// Compares whole-run results. Throughput and data use completed requests and
-/// bytes over elapsed time, not the trailing five-second card values. A change
-/// within `noise_pct` percent counts as unchanged; this is a tolerance band,
-/// not a statistical significance test.
+/// bytes over the measured window (elapsed time after warmup), not the trailing
+/// five-second card values. A change within `noise_pct` percent counts as
+/// unchanged; this is a tolerance band, not a statistical significance test.
 pub fn compare(
     base: &Snapshot,
     base_plan: &TestPlan,
@@ -172,8 +172,12 @@ pub fn compare(
 ) -> Comparison {
     let noise = noise_pct.max(0.0);
     let overall = deltas(
-        (&base.counts, &base.latency, base.elapsed),
-        (&candidate.counts, &candidate.latency, candidate.elapsed),
+        (&base.counts, &base.latency, base.measured_elapsed()),
+        (
+            &candidate.counts,
+            &candidate.latency,
+            candidate.measured_elapsed(),
+        ),
         noise,
     );
     let endpoints = base
@@ -185,8 +189,8 @@ pub fn compare(
                 id: b.id,
                 name: c.name.clone(),
                 deltas: deltas(
-                    (&b.counts, &b.latency, base.elapsed),
-                    (&c.counts, &c.latency, candidate.elapsed),
+                    (&b.counts, &b.latency, base.measured_elapsed()),
+                    (&c.counts, &c.latency, candidate.measured_elapsed()),
                     noise,
                 ),
             })
@@ -266,6 +270,7 @@ fn warnings(
         format!("{} ms", b.timeout_ms),
         format!("{} ms", c.timeout_ms),
     );
+    differs("Warmup", b.warmup.describe(), c.warmup.describe());
     let requests = |p: &TestPlan| -> Vec<(u64, String, String)> {
         p.requests
             .iter()

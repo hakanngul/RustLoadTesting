@@ -130,6 +130,11 @@ HTTP status counts, endpoint results, and filterable logs help you inspect failu
 SLO threshold results appear under the run title when the plan has any.
 Select a previous run in the sidebar to reopen its saved summary.
 
+With warmup set under Load Configuration (**By duration** or **By requests**),
+Monitor shows warmup progress, then how many requests it excluded and when
+measurement started. The RPS chart draws warmup traffic as a separate gray line
+and marks the end of warmup.
+
 To compare two saved runs, pin one with **Baseline** in the sidebar, then choose
 **Compare** on another. The comparison shows both runs' throughput and P95 charts
 overlaid, a whole-run table with the change per metric, and per-request changes
@@ -268,6 +273,7 @@ duration includes ramp-up. It does not generate an independent open arrival rate
 | Percentile cards | Whole-run HDR Histogram results |
 | Percentile charts | Independent interval histograms; percentiles are never averaged across intervals |
 | RPS card | Completions per second over a trailing five-second bucketed window, with proportionally weighted boundary buckets |
+| Warmup | Optional, by duration or request count. Requests started during warmup are excluded from every result metric and counted separately; total duration includes warmup; whole-run throughput uses the time after warmup |
 | Run comparison | Throughput and data are completed requests and bytes divided by elapsed time over each whole run; latency uses whole-run histograms; data rate is informational and does not affect the verdict |
 | SLO verdict | Latency thresholds use whole-run histograms; error rate uses completed requests; throughput is completed requests divided by elapsed time over the whole run, not the five-second RPS card. A target equal to the measured value passes |
 | Data / sec card | Response body bytes per second over the same trailing window; only fully read responses count, headers are excluded |

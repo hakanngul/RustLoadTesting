@@ -123,6 +123,11 @@ test ve belgeleri aynı kapsamda güncelle.
   Assertion ve extraction da başarılı olmalıdır. HTTP hata sayaçları ayrıca tutulur.
 - `started = completed + cancelled + in_flight`;
   `completed = success + failure`. İptaller hata oranının paydasına girmez.
+- Warmup (opsiyonel; süre veya istek sayısı): warmup sırasında *başlayan*
+  istekler hiçbir sonuç metriğine (sayaç, histogram, status, endpoint, byte)
+  girmez; ayrı `warmup_counts` tutulur ve yukarıdaki eşitlik her faz için ayrı
+  geçerlidir. Toplam süre warmup'ı içerir. SLO/karşılaştırma throughput'u ölçüm
+  penceresini (warmup sonrası) kullanır. Warmup bitmezse ölçülmüş veri yoktur.
 - Latency HTTP başlangıcından gövdenin tamamen okunmasına kadardır; pacing ve
   think time hariçtir. Tam okunmuş yanıtlar histogramlara girer; network/timeout
   süreleri response latency yüzdeliklerine katılmaz.
