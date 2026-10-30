@@ -130,6 +130,16 @@ HTTP status counts, endpoint results, and filterable logs help you inspect failu
 SLO threshold results appear under the run title when the plan has any.
 Select a previous run in the sidebar to reopen its saved summary.
 
+To compare two saved runs, pin one with **Baseline** in the sidebar, then choose
+**Compare** on another. The comparison shows both runs' throughput and P95 charts
+overlaid, a whole-run table with the change per metric, and per-request changes
+matched by request ID. Each metric is marked Improved, Regressed or Unchanged;
+the run as a whole is Improved, Regressed, Mixed or Unchanged. Changes within the
+noise band (default ±2 %, adjustable and remembered) count as unchanged; this is
+a tolerance, not a statistical significance test. Runs with different users,
+duration, load profile, RPS cap, think time, timeout or request steps are still
+compared, with a warning. **Swap** exchanges baseline and candidate.
+
 Dark and Light themes are available throughout the app. You can also view
 [Studio in Light](docs/screenshots/studio-light.png),
 [Studio 2 in Light](docs/screenshots/studio2-light.png), and
@@ -238,6 +248,7 @@ duration includes ramp-up. It does not generate an independent open arrival rate
 | Percentile cards | Whole-run HDR Histogram results |
 | Percentile charts | Independent interval histograms; percentiles are never averaged across intervals |
 | RPS card | Completions per second over a trailing five-second bucketed window, with proportionally weighted boundary buckets |
+| Run comparison | Throughput and data are completed requests and bytes divided by elapsed time over each whole run; latency uses whole-run histograms; data rate is informational and does not affect the verdict |
 | SLO verdict | Latency thresholds use whole-run histograms; error rate uses completed requests; throughput is completed requests divided by elapsed time over the whole run, not the five-second RPS card. A target equal to the measured value passes |
 | Data / sec card | Response body bytes per second over the same trailing window; only fully read responses count, headers are excluded |
 | Global RPS limit | Scheduled HTTP starts across all users; timer lag catch-up is bounded to 10 ms, and idle time does not bank burst credits |

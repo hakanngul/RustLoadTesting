@@ -1,5 +1,29 @@
 # Validation evidence
 
+## Run comparison update
+
+Monitor's history cards gain a UTC start time, **Baseline** (pin) and **Compare**.
+The comparison view shows the overall verdict, setup warnings, a noise band,
+a whole-run table, overlaid throughput/P95 charts and per-request changes. No
+SQLite schema change; runs load through `History::read` and `History::points`.
+
+- `tests/compare.rs` (5 tests): direction per metric, the noise boundary
+  (+2.0 % unchanged, +2.5 % regressed), Improved/Regressed/Mixed/Unchanged/No
+  data verdicts, informational data rate, change from a zero baseline,
+  endpoint matching by ID with renamed and one-sided requests, setup and state
+  warnings, and UTC labels from run IDs (including a leap day).
+- `saved_runs_can_be_compared`: two real fixture runs (2 and 4 users) saved to
+  SQLite, read back and compared: one matched endpoint, one users warning,
+  throughput present on both sides.
+- Native Linux/Xvfb: two 5 s Local Demo runs (10 and 20 users). Pinned the first
+  as baseline and compared: verdict Mixed, warning "Virtual users differs: 10 vs
+  20", whole-run and per-request tables, dashed baseline overlays. Swap reversed
+  the roles and the pin; a 25 % noise band left only P99 regressed. Checked in
+  Dark, Light and 900×720.
+
+Suite: **40 passed** (5 compare, 14 core/report, 9 dashboard-layout, 12 engine).
+Format, strict all-target Clippy and build pass. Linux only; macOS CI separate.
+
 ## SLO thresholds update
 
 Plans gain up to 50 thresholds (P50/P90/P95/P99/mean latency, error rate,

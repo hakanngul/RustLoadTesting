@@ -1,3 +1,4 @@
+mod compare;
 mod dashboard;
 mod studio2;
 
@@ -28,6 +29,9 @@ struct Preferences {
     workspace: Workspace,
     #[serde(default)]
     dashboards: Dashboards,
+    /// Run comparison noise band in percent; `None` uses the default.
+    #[serde(default)]
+    compare_noise_pct: Option<f64>,
 }
 #[derive(Default, PartialEq, Clone, Copy, Serialize, Deserialize)]
 enum Workspace {
@@ -84,6 +88,8 @@ pub struct RustLoadApp {
     resource_sample: std::time::Instant,
     cpu: f32,
     memory: u64,
+    compare_base: Option<String>,
+    comparison: Option<compare::ComparisonView>,
 }
 impl RustLoadApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -139,6 +145,8 @@ impl RustLoadApp {
             resource_sample: std::time::Instant::now() - Duration::from_secs(2),
             cpu: 0.0,
             memory: 0,
+            compare_base: None,
+            comparison: None,
         };
         theme::apply(&cc.egui_ctx, !app.prefs.light);
         app.refresh_history();
@@ -570,9 +578,19 @@ impl RustLoadApp {
                         self.show_live = true;
                         self.snapshot = self.live.clone();
                         self.report_plan = self.live_plan.clone();
+                        self.comparison = None;
                     }
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         let mut selected = None;
+                        let mut pin = None;
+                        let mut compare_with = None;
+                        if self.compare_base.is_some() {
+                            ui.label(
+                                RichText::new("Baseline pinned · choose Compare on another run")
+                                    .small()
+                                    .color(p.muted),
+                            );
+                        }
                         for item in &self.history {
                             let color = match item.state.as_str() {
                                 "Completed" => p.success,
@@ -584,6 +602,11 @@ impl RustLoadApp {
                                     ui.set_min_width(ui.available_width());
                                     ui.label(RichText::new(&item.name).strong());
                                     ui.label(
+                                        RichText::new(crate::compare::run_time_label(&item.id))
+                                            .small()
+                                            .color(p.muted),
+                                    );
+                                    ui.label(
                                         RichText::new(format!(
                                             "{} · {:.0}s · {} req",
                                             item.state, item.elapsed, item.completed
@@ -591,7 +614,32 @@ impl RustLoadApp {
                                         .small()
                                         .color(color),
                                     );
-                                    ui.button("Open summary").clicked()
+                                    let open = ui.button("Open summary").clicked();
+                                    ui.horizontal_wrapped(|ui| {
+                                        let pinned = self.compare_base.as_deref() == Some(&item.id);
+                                        if ui
+                                            .selectable_label(pinned, "Baseline")
+                                            .on_hover_text(
+                                                "Pin this run as the comparison baseline",
+                                            )
+                                            .clicked()
+                                        {
+                                            pin = Some((!pinned).then(|| item.id.clone()));
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                self.compare_base.is_some() && !pinned,
+                                                egui::Button::new("Compare"),
+                                            )
+                                            .on_disabled_hover_text(
+                                                "Pin another run as the baseline first",
+                                            )
+                                            .clicked()
+                                        {
+                                            compare_with = Some(item.id.clone());
+                                        }
+                                    });
+                                    open
                                 })
                                 .inner
                             {
@@ -599,12 +647,24 @@ impl RustLoadApp {
                             }
                             ui.add_space(4.0);
                         }
+                        if let Some(base) = pin {
+                            self.compare_base = base;
+                        }
+                        if let (Some(base), Some(candidate)) =
+                            (self.compare_base.clone(), compare_with)
+                        {
+                            match compare::ComparisonView::load(&base, &candidate) {
+                                Ok(view) => self.comparison = Some(view),
+                                Err(e) => self.message = format!("Comparison: {e}"),
+                            }
+                        }
                         if let Some(id) = selected {
                             match History::open(&storage::default_db()).and_then(|h| h.read(&id)) {
                                 Ok((s, p)) => {
                                     self.snapshot = s;
                                     self.report_plan = p;
                                     self.show_live = false;
+                                    self.comparison = None;
                                 }
                                 Err(e) => self.message = e,
                             }
@@ -788,6 +848,10 @@ impl RustLoadApp {
             .height_range(120.0..=400.0)
             .show(ctx, |ui| self.logs(ui, p));
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.comparison.is_some() {
+                self.comparison_view(ui, p);
+                return;
+            }
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let s = &self.snapshot;
                 ui.horizontal_wrapped(|ui| {

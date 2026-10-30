@@ -1,3 +1,4 @@
+pub mod compare;
 pub mod core;
 pub mod dashboard;
 pub mod engine;
