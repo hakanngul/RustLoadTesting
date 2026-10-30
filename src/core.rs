@@ -567,6 +567,18 @@ pub fn expand(input: &str, vars: &Variables) -> Result<String, String> {
     Ok(result)
 }
 
+/// Field names must be set and secret fields need a value this session.
+fn check_fields<'a>(fields: impl IntoIterator<Item = &'a Field>) -> Result<(), String> {
+    for field in fields {
+        if field.name.trim().is_empty() {
+            return Err("Field names cannot be empty".into());
+        }
+        if (field.secret || sensitive(&field.name)) && field.value.is_empty() {
+            return Err(format!("Re-enter secret value: {}", field.name));
+        }
+    }
+    Ok(())
+}
 pub fn validate_url(input: &str) -> Result<url::Url, String> {
     let url = url::Url::parse(input).map_err(|_| "Invalid absolute URL".to_owned())?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -663,60 +675,21 @@ impl TestPlan {
         if self.requests.is_empty() || self.requests.len() > 500 {
             return Err("A plan needs 1–500 requests".into());
         }
+        check_fields(&self.variables).map_err(|e| format!("Plan variables: {e}"))?;
         let mut ids = std::collections::BTreeSet::new();
         for r in &self.requests {
             if !ids.insert(r.id) {
                 return Err("Request IDs must be unique".into());
             }
-            if !matches!(
-                r.method.as_str(),
-                "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
-            ) {
-                return Err("Unsupported HTTP method".into());
-            }
-            // Keep destination fixed: variables may be used in path/query, not scheme or authority.
-            let prefix = r.url.split_once("://").ok_or("Invalid URL")?;
-            let authority = prefix.1.split('/').next().unwrap_or_default();
-            if prefix.0.contains("{{") || authority.contains("{{") {
-                return Err("Target scheme and host cannot contain variables".into());
-            }
-            validate_url(&r.url.replace("{{", "var_").replace("}}", ""))?;
-            if r.timeout_ms.is_some_and(|t| t == 0 || t > 300_000) {
-                return Err("Request timeout must be 1–300,000 ms".into());
-            }
-            for field in r.headers.iter().chain(&r.query).chain(&self.variables) {
-                if field.name.trim().is_empty() {
-                    return Err("Field names cannot be empty".into());
+            // Name the request so the problem can be found in a long plan.
+            Self::validate_request(r).map_err(|e| {
+                let name = r.name.trim();
+                if name.is_empty() {
+                    format!("Request #{}: {e}", r.id)
+                } else {
+                    format!("Request \"{name}\": {e}")
                 }
-                if (field.secret || sensitive(&field.name)) && field.value.is_empty() {
-                    return Err(format!("Re-enter secret value: {}", field.name));
-                }
-            }
-            if r.auth.kind == AuthKind::Basic && r.auth.password.is_empty() {
-                return Err("Re-enter Basic Auth password".into());
-            }
-            if r.auth.kind == AuthKind::Bearer && r.auth.bearer.is_empty() {
-                return Err("Re-enter Bearer token or variable reference".into());
-            }
-            if r.assertions
-                .status
-                .is_some_and(|s| !(100..=599).contains(&s))
-            {
-                return Err("Expected status must be 100–599".into());
-            }
-            if !r.assertions.json_pointer.is_empty() {
-                serde_json::from_str::<serde_json::Value>(&r.assertions.json_expected)
-                    .map_err(|_| "JSON assertion expected value must be valid JSON")?;
-            }
-            for e in &r.extractors {
-                if e.variable.trim().is_empty()
-                    || (!e.pointer.is_empty() && !e.pointer.starts_with('/'))
-                {
-                    return Err(
-                        "Extractor requires a variable name and RFC 6901 JSON pointer".into(),
-                    );
-                }
-            }
+            })?;
         }
         if self.thresholds.len() > THRESHOLD_LIMIT {
             return Err(format!(
@@ -743,6 +716,49 @@ impl TestPlan {
         Ok(())
     }
 
+    fn validate_request(r: &Request) -> Result<(), String> {
+        if !matches!(
+            r.method.as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+        ) {
+            return Err("Unsupported HTTP method".into());
+        }
+        // Keep destination fixed: variables may be used in path/query, not scheme or authority.
+        let prefix = r.url.split_once("://").ok_or("Invalid URL")?;
+        let authority = prefix.1.split('/').next().unwrap_or_default();
+        if prefix.0.contains("{{") || authority.contains("{{") {
+            return Err("Target scheme and host cannot contain variables".into());
+        }
+        validate_url(&r.url.replace("{{", "var_").replace("}}", ""))?;
+        if r.timeout_ms.is_some_and(|t| t == 0 || t > 300_000) {
+            return Err("Request timeout must be 1–300,000 ms".into());
+        }
+        check_fields(r.headers.iter().chain(&r.query))?;
+        if r.auth.kind == AuthKind::Basic && r.auth.password.is_empty() {
+            return Err("Re-enter Basic Auth password".into());
+        }
+        if r.auth.kind == AuthKind::Bearer && r.auth.bearer.is_empty() {
+            return Err("Re-enter Bearer token or variable reference".into());
+        }
+        if r.assertions
+            .status
+            .is_some_and(|s| !(100..=599).contains(&s))
+        {
+            return Err("Expected status must be 100–599".into());
+        }
+        if !r.assertions.json_pointer.is_empty() {
+            serde_json::from_str::<serde_json::Value>(&r.assertions.json_expected)
+                .map_err(|_| "JSON assertion expected value must be valid JSON")?;
+        }
+        for e in &r.extractors {
+            if e.variable.trim().is_empty()
+                || (!e.pointer.is_empty() && !e.pointer.starts_with('/'))
+            {
+                return Err("Extractor requires a variable name and RFC 6901 JSON pointer".into());
+            }
+        }
+        Ok(())
+    }
     pub fn csv_rows(&self, base: &Path) -> Result<Vec<Variables>, String> {
         if self.csv.path.is_empty() {
             return Ok(vec![]);

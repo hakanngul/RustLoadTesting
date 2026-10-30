@@ -284,7 +284,10 @@ variable reference".
 - **+ New** boş bir plan açar. Kaydedilmemiş değişiklik varsa **Unsaved plan**
   penceresi **Keep editing** veya **Discard changes** seçeneklerini sunar.
 - **Validate plan** (**⚙ Users & plan settings**'in en altında) trafik
-  göndermeden planı ve CSV dosyasını kontrol eder.
+  göndermeden planı ve CSV dosyasını kontrol eder. Sonuç butonun altında yeşil
+  **Plan is valid** veya kırmızı **Plan has a problem** kartı olarak görünür
+  (mesaj isteğin adını verir, örneğin `Request "Pi": Invalid URL`) ve plan
+  değişene kadar kalır.
 
 Dosya pencereleri sistem dosya seçicisi değil, düz yol alanlarıdır. Göreli
 yollar uygulamanın başlatıldığı klasöre göre çözülür.
@@ -389,7 +392,10 @@ omission). Uygulanan yükün sabit kalması gerekiyorsa Arrival Rate kullanın.
 ### Başlatma ve durdurma
 
 1. Durum çubuğunun bildirdiği sorunları giderin. **▶ Run Test** önce planı
-   doğrular; bir sorun varsa "Validation: …" mesajı gösterir.
+   doğrular; bir sorun varsa "Validation: …" mesajı gösterir. Dikkat isteyen
+   durum çubuğu mesajları renklidir: hata kırmızı, uyarı (örneğin işaretlenmemiş
+   yetki kutusu) sarı, başarı yeşil. Test bitince durum çubuğu sonucu, tamamlanan
+   ve başarısız istek sayılarını ve SLO kararını gösterir.
 2. Yetki kutusunu işaretleyip **▶ Run Test**'e tıklayın. Studio'dan başlatırsanız
    Monitor'e geçilir; Studio 2'den başlatırsanız Studio 2'de kalırsınız.
 3. Test sürerken plan ve yük ayarları kilitlidir ("The running configuration is

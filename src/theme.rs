@@ -126,3 +126,16 @@ pub fn panel(p: Palette) -> egui::Frame {
         .corner_radius(10)
         .inner_margin(12)
 }
+/// Thin progress meter: an empty track stays empty at 0 (egui's ProgressBar
+/// always paints a dot) and the fill never covers a text label.
+pub fn meter(ui: &mut egui::Ui, p: Palette, fraction: f32, fill: Color32, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 8.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, p.elevated);
+    let fraction = fraction.clamp(0.0, 1.0);
+    if fraction > 0.0 {
+        let mut filled = rect;
+        filled.set_width((rect.width() * fraction).max(2.0));
+        painter.rect_filled(filled, 4.0, fill);
+    }
+}

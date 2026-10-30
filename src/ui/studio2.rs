@@ -58,16 +58,27 @@ impl RustLoadApp {
                 .height_range(130.0..=(available - 90.0).max(130.0))
                 .show_inside(ui, |ui| {
                     ui.set_min_height(ui.available_height());
+                    let request = &mut self.plan.requests[self.selected];
+                    let tab = &mut self.tab;
+                    // Name, URL and tabs stay put and only the tab content
+                    // scrolls, unless the panel is too short to leave the content
+                    // useful room; then everything scrolls together.
+                    let pinned = ui.available_height() >= 230.0;
+                    if pinned {
+                        ui.add_enabled_ui(!busy, |ui| request_header(ui, request, tab));
+                        ui.separator();
+                    }
                     egui::ScrollArea::both()
                         .id_salt(("studio2_request", request_id))
+                        .max_height(ui.available_height())
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.add_enabled_ui(!busy, |ui| {
-                                compact_request_editor(
-                                    ui,
-                                    &mut self.plan.requests[self.selected],
-                                    &mut self.tab,
-                                    p,
-                                );
+                                if !pinned {
+                                    request_header(ui, request, tab);
+                                    ui.separator();
+                                }
+                                request_options(ui, request, *tab, p);
                             });
                         });
                 });
@@ -93,10 +104,28 @@ impl RustLoadApp {
                         });
                         theme::panel(p).show(&mut columns[1], |ui| {
                             ui.set_min_width(ui.available_width());
+                            // Only the load settings scroll, so the authorization
+                            // box below them stays visible. Its height comes from
+                            // the previous frame.
+                            let auth_id = ui.id().with("studio2_auth_height");
+                            let auth = ui
+                                .ctx()
+                                .data(|d| d.get_temp::<f32>(auth_id))
+                                .unwrap_or(60.0);
                             egui::ScrollArea::vertical()
                                 .id_salt("studio2_load_scroll")
-                                .max_height((height - 28.0).max(50.0))
-                                .show(ui, |ui| self.studio2_load(ui, p));
+                                .max_height((height - 47.0 - auth).max(50.0))
+                                .show(ui, |ui| self.studio2_load_config(ui));
+                            ui.separator();
+                            let measured = ui
+                                .vertical(|ui| self.studio2_authorize(ui, p))
+                                .response
+                                .rect
+                                .height();
+                            if (measured - auth).abs() > 0.5 {
+                                ui.ctx().data_mut(|d| d.insert_temp(auth_id, measured));
+                                ui.ctx().request_repaint();
+                            }
                         });
                     });
                 } else {
@@ -129,11 +158,20 @@ impl RustLoadApp {
     }
 
     fn studio2_load(&mut self, ui: &mut egui::Ui, p: Palette) {
+        self.studio2_load_config(ui);
+        ui.separator();
+        self.studio2_authorize(ui, p);
+    }
+
+    fn studio2_load_config(&mut self, ui: &mut egui::Ui) {
         ui.strong("Load Configuration");
         let busy = self.busy();
         ui.add_enabled_ui(!busy, |ui| compact_load_editor(ui, &mut self.plan.load));
-        ui.separator();
-        if busy {
+    }
+
+    /// Authorization checkbox, target origins and the elevated-load warning.
+    fn studio2_authorize(&mut self, ui: &mut egui::Ui, p: Palette) {
+        if self.busy() {
             ui.colored_label(p.muted, "Running configuration is locked.");
         } else {
             ui.checkbox(
@@ -195,13 +233,13 @@ impl RustLoadApp {
                 &format!("{}", s.active_users),
                 p.text,
                 |ui| {
-                    ui.label(RichText::new(format!("/ {target}")).small().color(p.muted));
                     let fraction = s.active_users as f32 / target.max(1) as f32;
-                    ui.add(
-                        egui::ProgressBar::new(fraction)
-                            .fill(p.accent)
-                            .text(format!("{:.0}%", fraction * 100.0)),
+                    ui.label(
+                        RichText::new(format!("/ {target} · {:.0}%", fraction * 100.0))
+                            .small()
+                            .color(p.muted),
                     );
+                    theme::meter(ui, p, fraction, p.accent, ui.available_width());
                 },
             );
             studio2_card(
@@ -357,7 +395,7 @@ impl RustLoadApp {
                                 let status = r.assertions.status.map_or("200–299".into(), |v| v.to_string());
                                 if tree_item(ui, !self.plan_settings && self.selected == i && self.tab == 4, format!("{} · Status {status}", r.name)).clicked() { self.selected = i; self.tab = 4; self.plan_settings = false; }
                                 if let Some(max) = r.assertions.max_ms
-                                    && tree_item(ui, false, format!("Response time <= {max} ms")).clicked() { self.selected = i; self.tab = 4; self.plan_settings = false; }
+                                    && tree_item(ui, false, format!("Response time ≤ {max} ms")).clicked() { self.selected = i; self.tab = 4; self.plan_settings = false; }
                             }
                         });
                         egui::CollapsingHeader::new("SLO Thresholds").default_open(true).show(ui, |ui| {
@@ -461,7 +499,8 @@ fn sparkline(ui: &mut egui::Ui, values: impl Iterator<Item = f64>, color: Color3
         .add(egui::Shape::line(points, egui::Stroke::new(1.4_f32, color)));
 }
 
-fn compact_request_editor(ui: &mut egui::Ui, r: &mut Request, tab: &mut usize, p: Palette) {
+/// Name, method, URL and tab strip of the Studio 2 request editor.
+fn request_header(ui: &mut egui::Ui, r: &mut Request, tab: &mut usize) {
     ui.strong("HTTP Request");
     ui.horizontal(|ui| {
         ui.label("Name");
@@ -492,8 +531,6 @@ fn compact_request_editor(ui: &mut egui::Ui, r: &mut Request, tab: &mut usize, p
             ui.selectable_value(tab, i, label);
         }
     });
-    ui.separator();
-    request_options(ui, r, *tab, p);
 }
 
 fn split_body_editor(ui: &mut egui::Ui, r: &mut Request, p: Palette) {

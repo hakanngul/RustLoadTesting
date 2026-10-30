@@ -18,8 +18,11 @@ plan or a separate load engine. Editing in one layout is reflected in the other.
   reorder, duplicate and delete; assertion items open the selected request's
   assertions; CSV/variable items open the shared plan settings.
 - Center, above: compact Name and Method/URL form, Params/Headers/Auth/Assertions/
-  Extractors/Advanced tabs. The horizontal divider resizes this editor.
+  Extractors/Advanced tabs. The horizontal divider resizes this editor. Name, URL
+  and tabs stay in place and only the tab content scrolls; when the editor is
+  too short for that, the whole editor scrolls.
 - Center, below: Body and Load Configuration together, with target authorization.
+  The authorization box stays visible below the load settings, which scroll.
   Think time, timeout and response cap are under the **Timeout, think time & body limit** section.
 - Right: active/target VUs, five-second completion RPS, whole-run P95, error rate,
   average response time and real interval sparklines. No fabricated delta badges.
