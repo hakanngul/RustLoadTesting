@@ -15,7 +15,7 @@ use crate::{
     theme::{self, Palette},
 };
 use eframe::egui::{self, Color32, RichText};
-use egui_plot::{Legend, Line, Plot, PlotPoints, VLine};
+use egui_plot::{Legend, Line, Plot, PlotPoints, Points, VLine};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -1463,27 +1463,20 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
         .num_columns(2)
         .spacing([8.0, 10.0])
         .show(ui, |ui| {
+            let fixed = c.profile != Profile::Stages;
             ui.label("Virtual users");
-            ui.add(egui::DragValue::new(&mut c.users).range(1..=10_000));
+            ui.add_enabled(fixed, egui::DragValue::new(&mut c.users).range(1..=10_000));
             ui.end_row();
             ui.label("Total duration");
-            ui.add(
+            ui.add_enabled(
+                fixed,
                 egui::DragValue::new(&mut c.duration_secs)
                     .range(1..=86_400)
                     .suffix(" s"),
             );
             ui.end_row();
             ui.label("Profile");
-            egui::ComboBox::from_id_salt("profile")
-                .selected_text(if c.profile == Profile::Constant {
-                    "Constant Users"
-                } else {
-                    "Ramp-up Users"
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut c.profile, Profile::Constant, "Constant Users");
-                    ui.selectable_value(&mut c.profile, Profile::RampUp, "Ramp-up Users");
-                });
+            profile_combo(ui, c, "profile");
             ui.end_row();
             if c.profile == Profile::RampUp {
                 ui.label("Ramp-up");
@@ -1523,6 +1516,9 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
             warmup_control(ui, &mut c.warmup, c.duration_secs, "warmup");
             ui.end_row();
         });
+    if c.profile == Profile::Stages {
+        stage_editor(ui, c, "stages");
+    }
     ui.label(
         "Total duration includes ramp-up and warmup. Stop allows up to 5s for in-flight requests.",
     );
@@ -1608,6 +1604,176 @@ fn threshold_editor(
         p.muted,
         "Thresholds give each run a Passed/Failed verdict and never stop it. Latency and error rate are upper bounds; throughput is a lower bound measured as completed requests over the whole run.",
     );
+}
+/// Load profile selector shared by the Studio and Studio 2 load editors.
+fn profile_combo(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
+    let label = |p: &Profile| match p {
+        Profile::Constant => "Constant Users",
+        Profile::RampUp => "Ramp-up Users",
+        Profile::Stages => "Stages",
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(label(&c.profile))
+        .show_ui(ui, |ui| {
+            for profile in [Profile::Constant, Profile::RampUp, Profile::Stages] {
+                let text = label(&profile);
+                ui.selectable_value(&mut c.profile, profile, text);
+            }
+        });
+    if c.profile == Profile::Stages && c.stages.is_empty() {
+        // Start from ramp-up, hold, ramp-down over the current duration and users.
+        let part = (c.duration_secs / 5).max(1);
+        c.stages = vec![
+            Stage {
+                duration_secs: part,
+                target_users: c.users,
+            },
+            Stage {
+                duration_secs: c.duration_secs.saturating_sub(2 * part).max(1),
+                target_users: c.users,
+            },
+            Stage {
+                duration_secs: part,
+                target_users: 0,
+            },
+        ];
+    }
+}
+/// Stage table and draggable preview, shared by both load editors. Keeps the
+/// derived users and duration in sync so labels and warmup limits stay right.
+fn stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
+    let p = theme::palette(ui.visuals().dark_mode);
+    let mut remove = None;
+    egui::Grid::new((id, "table")).striped(true).show(ui, |ui| {
+        ui.strong("Stage");
+        ui.strong("Duration");
+        ui.strong("Target users");
+        ui.end_row();
+        let count = c.stages.len();
+        for (i, s) in c.stages.iter_mut().enumerate() {
+            ui.label(format!("{}", i + 1));
+            ui.add(
+                egui::DragValue::new(&mut s.duration_secs)
+                    .range(1..=86_400)
+                    .suffix(" s"),
+            );
+            ui.add(egui::DragValue::new(&mut s.target_users).range(0..=10_000));
+            if ui
+                .add_enabled(count > 1, egui::Button::new("×").small())
+                .clicked()
+            {
+                remove = Some(i);
+            }
+            ui.end_row();
+        }
+    });
+    if let Some(i) = remove {
+        c.stages.remove(i);
+    }
+    if ui
+        .add_enabled(
+            c.stages.len() < STAGE_LIMIT,
+            egui::Button::new("+ Add stage"),
+        )
+        .clicked()
+    {
+        let last = c.stages.last().map_or(c.users, |s| s.target_users);
+        c.stages.push(Stage {
+            duration_secs: 30,
+            target_users: last,
+        });
+    }
+    // Bounds stay fixed while a point is dragged; otherwise moving a point
+    // would rescale the axes under the pointer and run away.
+    let drag = ui.id().with((id, "drag"));
+    let frozen = ui.id().with((id, "bounds"));
+    let bounds = ui.data(|d| d.get_temp::<[f64; 2]>(frozen)).unwrap_or([
+        c.total_secs() as f64 * 1.05,
+        c.max_users() as f64 * 1.2 + 1.0,
+    ]);
+    let ends: Vec<[f64; 2]> = c
+        .schedule()
+        .into_iter()
+        .skip(1)
+        .map(|(t, u)| [t, u])
+        .collect();
+    let response = Plot::new((id, "plot"))
+        .height(130.0)
+        .allow_drag(false)
+        .allow_zoom(false)
+        .allow_scroll(false)
+        .allow_boxed_zoom(false)
+        .show(ui, |plot| {
+            plot.set_plot_bounds(egui_plot::PlotBounds::from_min_max([0.0, 0.0], bounds));
+            let line: Vec<[f64; 2]> = c.schedule().into_iter().map(|(t, u)| [t, u]).collect();
+            plot.line(
+                Line::new("Users", PlotPoints::from(line))
+                    .color(p.success)
+                    .width(2.0_f32),
+            );
+            plot.points(
+                Points::new("Stage end", ends.clone())
+                    .radius(5.0_f32)
+                    .color(p.accent),
+            );
+        });
+    // Drag a stage end to change its duration (x) and target users (y).
+    let r = &response.response;
+    // A drag registers after the pointer has moved a few pixels, so pick the
+    // point under where the press began.
+    if r.drag_started()
+        && let Some(pos) = ui.input(|i| i.pointer.press_origin())
+    {
+        let nearest = ends
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let at = response
+                    .transform
+                    .position_from_point(&egui_plot::PlotPoint::new(e[0], e[1]));
+                (i, at.distance(pos))
+            })
+            .filter(|(_, d)| *d < 14.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        ui.data_mut(|d| match nearest {
+            Some((i, _)) => {
+                d.insert_temp(drag, i);
+                d.insert_temp(frozen, bounds);
+            }
+            None => d.remove::<usize>(drag),
+        });
+    }
+    if r.dragged()
+        && let (Some(i), Some(pos)) = (
+            ui.data(|d| d.get_temp::<usize>(drag)),
+            r.interact_pointer_pos(),
+        )
+        && i < c.stages.len()
+    {
+        let value = response.transform.value_from_position(pos);
+        let start: u64 = c.stages[..i].iter().map(|s| s.duration_secs).sum();
+        c.stages[i].duration_secs = (value.x.min(bounds[0]) - start as f64)
+            .round()
+            .clamp(1.0, 86_400.0) as u64;
+        c.stages[i].target_users = value.y.round().clamp(0.0, bounds[1].min(10_000.0)) as u32;
+    }
+    if r.drag_stopped() {
+        ui.data_mut(|d| {
+            d.remove::<usize>(drag);
+            d.remove::<[f64; 2]>(frozen);
+        });
+    }
+    ui.label(
+        RichText::new(format!(
+            "{}s total · peak {} users · drag the points or edit the table",
+            c.total_secs(),
+            c.max_users()
+        ))
+        .small()
+        .color(p.muted),
+    );
+    c.users = c.max_users().max(1);
+    c.duration_secs = c.total_secs().max(1);
 }
 /// Warmup selector shared by the Studio and Studio 2 load editors.
 fn warmup_control(ui: &mut egui::Ui, warmup: &mut Warmup, duration_secs: u64, id: &str) {

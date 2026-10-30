@@ -50,7 +50,19 @@ pub enum Profile {
     #[default]
     Constant,
     RampUp,
+    /// Piecewise-linear user count over consecutive stages.
+    Stages,
 }
+
+/// Linear move from the previous user count (0 at the start) to `target_users`
+/// over `duration_secs`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Stage {
+    pub duration_secs: u64,
+    pub target_users: u32,
+}
+pub const STAGE_LIMIT: usize = 20;
 
 /// Requests started during warmup are excluded from every result metric.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -84,6 +96,8 @@ pub struct LoadConfig {
     pub timeout_ms: u64,
     pub body_limit_bytes: usize,
     pub warmup: Warmup,
+    /// Used when `profile` is `Stages`; then `users` and `duration_secs` are derived.
+    pub stages: Vec<Stage>,
 }
 impl Default for LoadConfig {
     fn default() -> Self {
@@ -97,7 +111,104 @@ impl Default for LoadConfig {
             timeout_ms: 10_000,
             body_limit_bytes: 10 * 1024 * 1024,
             warmup: Warmup::None,
+            stages: vec![],
         }
+    }
+}
+
+impl LoadConfig {
+    /// Virtual users the run needs: the peak of the schedule.
+    pub fn max_users(&self) -> u32 {
+        match self.profile {
+            Profile::Stages => self
+                .stages
+                .iter()
+                .map(|s| s.target_users)
+                .max()
+                .unwrap_or(0),
+            _ => self.users,
+        }
+    }
+    /// Run length in seconds; for stages the sum of their durations.
+    pub fn total_secs(&self) -> u64 {
+        match self.profile {
+            Profile::Stages => self.stages.iter().map(|s| s.duration_secs).sum(),
+            _ => self.duration_secs,
+        }
+    }
+    /// The user count over time as (seconds, users) points joined linearly.
+    /// Every profile is expressed this way, so the engine has one code path.
+    pub fn schedule(&self) -> Vec<(f64, f64)> {
+        let users = self.users as f64;
+        let total = self.duration_secs as f64;
+        match self.profile {
+            Profile::Constant => vec![(0.0, users), (total, users)],
+            Profile::RampUp => vec![(0.0, 0.0), (self.ramp_secs as f64, users), (total, users)],
+            Profile::Stages => {
+                let mut points = vec![(0.0, 0.0)];
+                let mut at = 0.0;
+                for s in &self.stages {
+                    at += s.duration_secs as f64;
+                    points.push((at, s.target_users as f64));
+                }
+                points
+            }
+        }
+    }
+    /// Short profile description, e.g. `ramp-up 10s` or `stages 60s to 50, 300s to 200`.
+    pub fn profile_label(&self) -> String {
+        match self.profile {
+            Profile::Constant => "constant".into(),
+            Profile::RampUp => format!("ramp-up {}s", self.ramp_secs),
+            Profile::Stages => format!(
+                "stages {}",
+                self.stages
+                    .iter()
+                    .map(|s| format!("{}s to {}", s.duration_secs, s.target_users))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+    /// Scheduled (fractional) user count at `t` seconds.
+    pub fn target_at(&self, t: f64) -> f64 {
+        let points = self.schedule();
+        for w in points.windows(2) {
+            let ((ta, ua), (tb, ub)) = (w[0], w[1]);
+            if t <= tb {
+                return if tb > ta {
+                    ua + (ub - ua) * ((t - ta) / (tb - ta)).clamp(0.0, 1.0)
+                } else {
+                    ub
+                };
+            }
+        }
+        points.last().map_or(0.0, |p| p.1)
+    }
+    /// Earliest time at or after `after` when user `index` (0-based) is
+    /// scheduled to run, i.e. the user count exceeds `index`; `None` if never.
+    pub fn active_from(&self, index: u32, after: f64) -> Option<f64> {
+        let index = index as f64;
+        for w in self.schedule().windows(2) {
+            let ((ta, ua), (tb, ub)) = (w[0], w[1]);
+            if tb < after || ua.max(ub) <= index {
+                continue;
+            }
+            let start = ta.max(after);
+            if self.target_at(start) > index {
+                return Some(start);
+            }
+            if ub > ua {
+                // Rising segment: the count passes `index` at the crossing. A hair
+                // after it, so the count is strictly above `index` on waking; and
+                // never before `start`, which rounding could otherwise produce.
+                let crossing = ta + (index - ua) / (ub - ua) * (tb - ta);
+                if crossing <= tb {
+                    return Some(crossing.max(start) + 1e-6);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -355,8 +466,19 @@ impl TestPlan {
             return Err("Unsupported plan schema version".into());
         }
         let c = &self.load;
-        if !(1..=10_000).contains(&c.users)
-            || !(1..=86_400).contains(&c.duration_secs)
+        if c.profile == Profile::Stages {
+            if c.stages.is_empty() || c.stages.len() > STAGE_LIMIT {
+                return Err(format!("A stage profile needs 1–{STAGE_LIMIT} stages"));
+            }
+            if c.stages
+                .iter()
+                .any(|s| s.duration_secs == 0 || s.target_users > 10_000)
+            {
+                return Err("Each stage needs at least 1s and at most 10,000 users".into());
+            }
+        }
+        if !(1..=10_000).contains(&c.max_users())
+            || !(1..=86_400).contains(&c.total_secs())
             || !(1..=100_000).contains(&c.rps_limit)
             || !(1..=300_000).contains(&c.timeout_ms)
             || !(1..=100 * 1024 * 1024).contains(&c.body_limit_bytes)
@@ -367,7 +489,7 @@ impl TestPlan {
             return Err("Ramp-up must be between 1s and the total duration".into());
         }
         match c.warmup {
-            Warmup::Duration { secs } if secs == 0 || secs >= c.duration_secs => {
+            Warmup::Duration { secs } if secs == 0 || secs >= c.total_secs() => {
                 return Err(
                     "Warmup duration must be at least 1s and shorter than the total duration"
                         .into(),
@@ -489,7 +611,8 @@ impl TestPlan {
                 .map_err(|_| "Malformed CSV row or missing column".to_owned())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if rows.is_empty() || (!self.csv.reuse_rows && rows.len() < self.load.users as usize) {
+        if rows.is_empty() || (!self.csv.reuse_rows && rows.len() < self.load.max_users() as usize)
+        {
             return Err("CSV needs one row per user, or enable Reuse rows".into());
         }
         Ok(rows)

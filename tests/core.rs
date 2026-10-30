@@ -426,3 +426,84 @@ fn warmup_settings_validate_and_older_plans_have_none() {
     let old: TestPlan = serde_json::from_value(json).unwrap();
     assert_eq!(old.load.warmup, Warmup::None);
 }
+
+fn stages(spec: &[(u64, u32)]) -> LoadConfig {
+    LoadConfig {
+        profile: Profile::Stages,
+        stages: spec
+            .iter()
+            .map(|&(duration_secs, target_users)| Stage {
+                duration_secs,
+                target_users,
+            })
+            .collect(),
+        ..LoadConfig::default()
+    }
+}
+
+#[test]
+fn every_profile_is_one_schedule() {
+    // Constant: everyone from the start.
+    let constant = LoadConfig::default();
+    assert_eq!(constant.active_from(9, 0.0), Some(0.0));
+    assert_eq!(constant.active_from(10, 0.0), None);
+    // Ramp-up: user i starts at ramp * i / users, as before.
+    let ramp = LoadConfig {
+        profile: Profile::RampUp,
+        users: 10,
+        ramp_secs: 10,
+        ..LoadConfig::default()
+    };
+    for i in 0..10 {
+        let at = ramp.active_from(i, 0.0).unwrap();
+        assert!((at - i as f64).abs() < 1e-3, "user {i} at {at}");
+    }
+    // Stages: up to 10, down to 0, up to 10 again.
+    let s = stages(&[(10, 10), (10, 0), (10, 10)]);
+    assert_eq!((s.max_users(), s.total_secs()), (10, 30));
+    assert!((s.target_at(5.0) - 5.0).abs() < 1e-9);
+    assert!((s.target_at(15.0) - 5.0).abs() < 1e-9);
+    assert!((s.active_from(5, 0.0).unwrap() - 5.0).abs() < 1e-3);
+    // After ramping down past it at 15 s, user 5 returns on the next rise at 25 s.
+    assert!(s.target_at(15.5) <= 5.0);
+    assert!((s.active_from(5, 15.5).unwrap() - 25.0).abs() < 1e-3);
+    assert_eq!(stages(&[(10, 3)]).active_from(5, 0.0), None);
+    assert_eq!(s.profile_label(), "stages 10s to 10, 10s to 0, 10s to 10");
+}
+
+#[test]
+fn stage_profiles_validate() {
+    let check = |load: LoadConfig| {
+        TestPlan {
+            load,
+            ..TestPlan::default()
+        }
+        .validate(std::path::Path::new("."))
+    };
+    assert!(check(stages(&[(5, 10), (20, 10), (5, 0)])).is_ok());
+    assert!(check(stages(&[])).is_err());
+    assert!(check(stages(&[(0, 10)])).is_err());
+    assert!(check(stages(&[(5, 10_001)])).is_err());
+    assert!(
+        check(stages(&[(5, 0)])).is_err(),
+        "peak must be at least one user"
+    );
+    assert!(check(stages(&vec![(1, 1); STAGE_LIMIT + 1])).is_err());
+    // Warmup limits use the stage total, not the unused duration field.
+    let mut warm = stages(&[(5, 10), (5, 10)]);
+    warm.duration_secs = 1;
+    warm.warmup = Warmup::Duration { secs: 8 };
+    assert!(check(warm).is_ok());
+
+    let plan = TestPlan {
+        load: stages(&[(5, 10)]),
+        ..TestPlan::default()
+    };
+    let mut json = serde_json::to_value(&plan).unwrap();
+    let back: TestPlan = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(back.load.stages, plan.load.stages);
+    json["load"].as_object_mut().unwrap().remove("stages");
+    json["load"]["profile"] = "RampUp".into();
+    let old: TestPlan = serde_json::from_value(json).unwrap();
+    assert!(old.load.stages.is_empty());
+}

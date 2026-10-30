@@ -529,8 +529,9 @@ fn compact_load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
         egui::Grid::new("studio2_load_config")
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
+                let fixed = c.profile != Profile::Stages;
                 ui.label("Virtual users");
-                ui.add(egui::DragValue::new(&mut c.users).range(1..=10_000));
+                ui.add_enabled(fixed, egui::DragValue::new(&mut c.users).range(1..=10_000));
                 ui.end_row();
                 ui.label("Ramp-up time");
                 ui.add_enabled(
@@ -541,28 +542,23 @@ fn compact_load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
                 );
                 ui.end_row();
                 ui.label("Total duration");
-                ui.add(
+                ui.add_enabled(
+                    fixed,
                     egui::DragValue::new(&mut c.duration_secs)
                         .range(1..=86_400)
                         .suffix(" s"),
                 );
                 ui.end_row();
                 ui.label("Load profile");
-                egui::ComboBox::from_id_salt("studio2_profile")
-                    .selected_text(if c.profile == Profile::Constant {
-                        "Constant Users"
-                    } else {
-                        "Ramp-up Users"
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut c.profile, Profile::Constant, "Constant Users");
-                        ui.selectable_value(&mut c.profile, Profile::RampUp, "Ramp-up Users");
-                    });
+                profile_combo(ui, c, "studio2_profile");
                 ui.end_row();
                 ui.label("Global RPS cap");
                 ui.add(egui::DragValue::new(&mut c.rps_limit).range(1..=100_000));
                 ui.end_row();
             });
+        if c.profile == Profile::Stages {
+            stage_editor(ui, c, "studio2_stages");
+        }
         egui::CollapsingHeader::new("Timeout, think time & body limit").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Think / iteration");

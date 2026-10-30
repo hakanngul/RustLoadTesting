@@ -1,5 +1,5 @@
 use crate::{
-    core::{self, AuthKind, Profile, Request, TestPlan, Variables, Warmup},
+    core::{self, AuthKind, Request, TestPlan, Variables, Warmup},
     metrics::*,
     storage::History,
 };
@@ -48,7 +48,7 @@ pub fn start(
         run_id: id.clone(),
         name: plan.name.clone(),
         state: RunState::Running,
-        target_users: plan.load.users,
+        target_users: plan.load.max_users(),
         ..Snapshot::default()
     };
     let (tx, rx) = watch::channel(initial);
@@ -154,13 +154,13 @@ async fn coordinate(
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
-        .pool_max_idle_per_host(plan.load.users.min(256) as usize)
+        .pool_max_idle_per_host(plan.load.max_users().min(256) as usize)
         .build();
     let local_client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
-        .pool_max_idle_per_host(plan.load.users.min(256) as usize)
+        .pool_max_idle_per_host(plan.load.max_users().min(256) as usize)
         .build();
     let mut issue = None;
     let mut tasks = JoinSet::new();
@@ -175,10 +175,10 @@ async fn coordinate(
             stop: stop.clone(),
             force: force.clone(),
             began,
-            deadline: began + Duration::from_secs(plan.load.duration_secs),
+            deadline: began + Duration::from_secs(plan.load.total_secs()),
             starts: Arc::new(AtomicU64::new(0)),
         };
-        for user in 0..plan.load.users {
+        for user in 0..plan.load.max_users() {
             let c = context.clone();
             let mut vars: Variables = plan
                 .variables
@@ -188,21 +188,14 @@ async fn coordinate(
             if !rows.is_empty() {
                 vars.extend(rows[user as usize % rows.len()].clone());
             }
-            let delay = if plan.load.profile == Profile::RampUp {
-                Duration::from_secs_f64(
-                    plan.load.ramp_secs as f64 * user as f64 / plan.load.users as f64,
-                )
-            } else {
-                Duration::ZERO
-            };
-            tasks.spawn(async move { user_loop(c, vars, delay).await });
+            tasks.spawn(async move { user_loop(c, vars, user).await });
         }
     } else {
         issue = Some("HTTP client initialization failed".to_owned());
     }
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let deadline = began + Duration::from_secs(plan.load.duration_secs);
+    let deadline = began + Duration::from_secs(plan.load.total_secs());
     let mut draining: Option<Instant> = None;
     let mut user_stopped = false;
     let mut sequence = 0;
@@ -248,7 +241,7 @@ async fn coordinate(
         mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
         snapshot.run_id.clone_from(&id);
         snapshot.name.clone_from(&plan.name);
-        snapshot.target_users = plan.load.users;
+        snapshot.target_users = plan.load.max_users();
         snapshot.state = if draining.is_some() {
             RunState::Stopping
         } else {
@@ -276,7 +269,7 @@ async fn coordinate(
             mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
             snapshot.run_id.clone_from(&id);
             snapshot.name.clone_from(&plan.name);
-            snapshot.target_users = plan.load.users;
+            snapshot.target_users = plan.load.max_users();
             snapshot.state = if issue.is_some() {
                 RunState::Failed
             } else if user_stopped {
@@ -306,13 +299,32 @@ async fn coordinate(
     }
 }
 
-async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
-    tokio::select! { _ = c.stop.cancelled() => return, _ = tokio::time::sleep(delay) => {} }
-    if Instant::now() >= c.deadline {
-        return;
-    }
-    c.metrics.lock().expect("metrics lock").users += 1;
+/// Virtual user `index` runs while the schedule's user count exceeds its index.
+/// It joins or leaves only between iterations, so ramp-down lets the current
+/// iteration finish.
+async fn user_loop(c: Context, mut vars: Variables, index: u32) {
+    let mut active = false;
     'scenario: loop {
+        let now = c.began.elapsed().as_secs_f64();
+        if c.plan.load.target_at(now) <= index as f64 {
+            if active {
+                c.metrics.lock().expect("metrics lock").users -= 1;
+                active = false;
+            }
+            let Some(at) = c.plan.load.active_from(index, now) else {
+                break;
+            };
+            let wake = c.began + Duration::from_secs_f64(at);
+            if wake >= c.deadline {
+                break;
+            }
+            tokio::select! { _ = c.stop.cancelled() => break, _ = tokio::time::sleep_until(wake) => {} }
+            continue;
+        }
+        if !active {
+            c.metrics.lock().expect("metrics lock").users += 1;
+            active = true;
+        }
         for request in &c.plan.requests {
             if !permit(&c).await {
                 break 'scenario;
@@ -463,7 +475,9 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
             break;
         }
     }
-    c.metrics.lock().expect("metrics lock").users -= 1;
+    if active {
+        c.metrics.lock().expect("metrics lock").users -= 1;
+    }
 }
 
 /// Counts a measured (non-warmup) result for the run and its endpoint.
