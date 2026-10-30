@@ -5,7 +5,8 @@ available. The chosen workspace, like the theme, is retained across restarts.
 
 The layout below is the default. **Edit layout / + Widget / Layouts…** now allow
 personal widget visibility, order, sizes and named dashboard-only pages. All
-analytics can be hidden to reclaim editor space. See [personal layouts](widgets.md).
+analytics can be hidden to reclaim editor space. Studio and Monitor have their own,
+independent widget pages built on the same system. See [personal layouts](widgets.md).
 
 Studio 2 uses the same TestPlan, selected request, variables, auth, load settings,
 engine handle and current-run measurements as Studio. It does not create a second

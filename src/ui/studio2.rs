@@ -11,19 +11,20 @@ enum RequestAction {
 
 impl RustLoadApp {
     pub(super) fn studio2(&mut self, ctx: &egui::Context, p: Palette) {
-        if self.prefs.dashboards.active().dashboard_only {
+        let ws = Workspace::Studio2;
+        if self.prefs.dashboards_for(ws).active().dashboard_only {
             self.dashboard_canvas(ctx, p);
             return;
         }
         let compact = ctx.content_rect().width() < 1150.0;
-        self.dashboard_bottom(ctx, p);
+        self.dashboard_bottom(ctx, p, ws);
         self.studio2_tree(ctx, p);
-        self.dashboard_right(ctx, p, compact);
+        self.dashboard_right(ctx, p, ws, compact);
 
         let busy = self.busy();
         egui::CentralPanel::default().show(ctx, |ui| {
             if compact {
-                self.dashboard_compact_right(ui, p);
+                self.dashboard_compact_right(ui, p, ws);
             }
             let before = format!("{:?}", self.plan);
             if self.plan_settings {
@@ -158,27 +159,29 @@ impl RustLoadApp {
         }
     }
 
-    pub(super) fn studio2_metrics(&self, ui: &mut egui::Ui, p: Palette) {
+    /// Live KPI group for `ws`'s snapshot (Monitor may show a history run).
+    pub(super) fn studio2_metrics(&self, ui: &mut egui::Ui, p: Palette, ws: Workspace) {
+        let s = self.widget_source(ws);
+        let running = self.busy() && s.run_id == self.live.run_id;
         ui.horizontal_wrapped(|ui| {
             ui.strong("Live Metrics");
             ui.colored_label(
-                if self.busy() { p.success } else { p.muted },
-                format!("{:?}", self.live.state),
+                if running { p.success } else { p.muted },
+                format!("{:?}", s.state),
             );
             ui.label(
                 RichText::new(format!(
                     "{:02}:{:02}",
-                    self.live.elapsed as u64 / 60,
-                    self.live.elapsed as u64 % 60
+                    s.elapsed as u64 / 60,
+                    s.elapsed as u64 % 60
                 ))
                 .small()
                 .color(p.muted),
             );
         });
-        warmup_line(ui, &self.live, p);
-        slo_badges(ui, &self.live, p);
+        warmup_line(ui, s, p);
+        slo_badges(ui, s, p);
         ui.add_space(8.0);
-        let s = &self.live;
         let target = if s.run_id.is_empty() {
             self.plan.load.users
         } else {

@@ -32,7 +32,7 @@ uygulamayla gelen HTTP test sunucusu kullanılarak Linux üzerinde alındı.*
 | Yanıtları doğrulama | Beklenen durum kodu, yanıt süresi sınırı ve JSON Pointer eşitlik kontrolleri |
 | Yükü yapılandırma | Eşzamanlı kullanıcı sayısı, sabit veya doğrusal artış profili, toplam süre, senaryo tekrarları arasındaki bekleme, zaman aşımı ve ortak istek başlatma sınırı |
 | Testi izleme | İstek hızı, gecikme yüzdelikleri, aktif kullanıcılar, HTTP durum kodları, uç nokta özetleri ve filtrelenebilir loglar |
-| Çalışma alanını düzenleme | İki Studio düzeni, adlandırılabilir widget sayfaları, sürükleyerek sıralama, ayarlanabilir genişlikler, koyu ve açık tema |
+| Çalışma alanını düzenleme | İki Studio düzeni; Studio, Studio 2 ve Monitor'da özelleştirilebilir widgetlar ve adlandırılabilir sayfalar, sürükleyerek sıralama, ayarlanabilir genişlikler, koyu ve açık tema |
 | Sonuçları saklama | Yerel SQLite geçmişi ve HTML, JSON veya CSV olarak dışa aktarma |
 
 RustLoad şu anda MVP aşamasında. Linux üzerinde çalışması kontrol edildi.
@@ -136,6 +136,9 @@ gecikmeleri ve aktif kullanıcı sayısını izleyebilirsiniz. HTTP durum kodlar
 uç nokta sonuçları ve filtrelenebilir loglar hataları incelemenize yardımcı olur.
 Planda SLO eşiği varsa sonuçları çalıştırma başlığının altında görünür.
 Kaydedilmiş bir özeti açmak için soldaki geçmişten bir çalıştırma seçin.
+Çalıştırma başlığının altındaki her şey düzenlenebilir bir widget sayfasıdır
+(bkz. [Kişisel dashboardlar](#kişisel-dashboardlar)); widgetlar açık olan
+çalıştırmayı gösterir.
 
 Load Configuration altında warmup ayarlandıysa (**By duration** veya **By
 requests**), Monitor önce warmup ilerlemesini, ardından kaç isteğin hariç
@@ -161,9 +164,12 @@ Uygulamanın tamamında koyu ve açık tema kullanılabilir. Açık temadaki
 
 ## Kişisel dashboardlar
 
-Studio 2'de farklı işler için ayrı düzenler kaydedebilirsiniz. İstekleri
-düzenlerken yalnızca istek hızı grafiğini açık bırakabilir veya sonuçları izlemek
-için ayrı bir sayfa oluşturabilirsiniz.
+Studio, Studio 2 ve Monitor'un her birinin kendi widget sayfaları vardır; bir
+çalışma alanını düzenlemek diğerlerini değiştirmez. Varsayılan sayfalar her
+alanın yerleşik düzenini aynen verir. Studio 2'de istekleri düzenlerken yalnızca
+istek hızı grafiğini açık bırakabilir veya sonuçlar için ayrı bir sayfa
+oluşturabilirsiniz; Monitor'da örneğin gecikme dağılımını diğer sonuç
+grafiklerinin yanına ekleyebilirsiniz.
 
 ![İstek hızı, HTTP durum dağılımı, aktif kullanıcılar ve loglardan oluşan Performance dashboard'u](docs/screenshots/widgets-dashboard.png)
 
@@ -173,15 +179,18 @@ Mevcut sayfayı düzenlemek için:
    düğmesine tıklayın.
 2. **+ Widget** ile grafik, tablo, log paneli veya canlı metrik grubu ekleyin.
 3. Widgetları sürükleyerek sıralayın. Menülerinden satır genişliğini ayarlayabilir,
-   editörlü düzende alt ve sağ paneller arasında taşıyabilirsiniz.
+   öne/arkaya alabilir veya paneller arasında taşıyabilirsiniz: Studio 2'de
+   Bottom ve Right; Monitor'da Main area, Bottom ve Right. Studio, Load
+   Configuration'ı sağda tuttuğu için widgetlarını yalnızca altta gösterir.
 4. Bir widgetı gizlemek için **×** düğmesine tıklayın. **Layouts…** üzerinden
    yeniden gösterebilirsiniz. Boş kalan paneller kapanır, alan editörlere kalır.
 5. Düzeni bu cihazda saklamak için **Save layout** düğmesine tıklayın.
 
 Ayrı bir sayfa oluşturmak için **Layouts…** menüsünden **Create blank page**
-veya **Duplicate current page** seçeneğini kullanın. Yeni boş sayfalar, istek
-editörünü gizleyen dashboard modunda açılır. Sayfaları yeniden adlandırabilir ve
-test sürerken aralarında geçiş yapabilirsiniz.
+veya **Duplicate current page** seçeneğini kullanın. Studio 2'de yeni boş
+sayfalar istek editörünü gizleyen dashboard modunda açılır; Studio ve Monitor
+sabit editörlerini ve çalıştırma başlığını korur. Sayfaları yeniden
+adlandırabilir ve test sürerken aralarında geçiş yapabilirsiniz.
 
 <details>
 <summary>Widget düzenleme kontrollerini göster</summary>
@@ -190,15 +199,17 @@ test sürerken aralarında geçiş yapabilirsiniz.
 
 </details>
 
-Katalogda sekiz widget var: istek hızı, gecikme, loglar, aktif kullanıcılar, HTTP
-durum dağılımı, uç nokta özeti, canlı metrikler ve gecikme dağılımı. Hepsi mevcut
-çalıştırmanın verilerini okur. Gecikme dağılımı, tüm çalıştırmanın histogramını
+Katalogda her çalışma alanında kullanılabilen on widget var: istek hızı, saniye
+başına istek (toplam/başarılı/başarısız), gecikme, loglar, aktif kullanıcılar,
+HTTP durum dağılımı, uç nokta özeti, canlı metrikler, KPI kartları (Monitor'un
+sekiz temel değeri) ve gecikme dağılımı. Studio ve Studio 2'de mevcut
+çalıştırmayı, Monitor'da mevcut veya açılan geçmiş çalıştırmayı gösterirler. Gecikme dağılımı, tüm çalıştırmanın histogramını
 (yalnızca ölçüm penceresi) en hızlı ve en yavaş yanıt arasında en fazla 40
 logaritmik aralıklı çubukla çizer; aynı histogramın P50/P95/P99 değerlerini
 işaretler. Çubuğun üzerine gelince aralığı ve yanıt sayısı görünür. Aynı widgettan birden fazla ekleyebilirsiniz. Bu sürümde log
 filtreleri ve otomatik takip ayarı, log widgetları arasında ortaktır.
 
-En fazla 20 düzen, her düzende 16 widget bulunabilir. Sayfa adları benzersiz ve
+Her çalışma alanında en fazla 20 düzen, her düzende 16 widget bulunabilir. Sayfa adları benzersiz ve
 1 ile 60 karakter arasında olmalı. Düzenler test planlarından ayrı kaydedilir;
 planı JSON olarak kaydetmek dashboard'u dışa aktarmaz.
 [Widget rehberinde](docs/widgets.md) boyutlandırma, varsayılanları geri yükleme

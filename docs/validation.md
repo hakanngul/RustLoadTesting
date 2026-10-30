@@ -1,5 +1,46 @@
 # Validation evidence
 
+## Workspace widgets update
+
+Monitor and Studio use the Studio 2 widget system with their own page sets.
+Monitor's results area (below the fixed run header) and Studio's bottom chart
+strip are now dashboards whose default pages reproduce the previous layouts. Two
+widget kinds were added (KPI Cards, Requests per Second); the catalog has ten.
+
+- 76 tests pass (6 compare, 23 core/report, 16 dashboard, 23 engine, 8 import);
+  fmt, strict Clippy, build and `git diff --check` succeed.
+- New dashboard tests: `workspace_defaults_reproduce_the_built_in_layouts`
+  (Studio 2 default unchanged, Monitor and Studio defaults widget by widget,
+  defaults survive normalization), `old_preferences_keep_studio2_layouts_and_gain_workspace_defaults`
+  (preferences JSON without the new keys keeps two Studio 2 pages intact and
+  gains Monitor/Studio defaults; saved layouts contain no plan/auth fields),
+  `workspace_page_sets_are_independent`, `normalization_fits_pages_to_their_workspace`
+  (Studio: Bottom only, no dashboard-only; Studio 2: no Main dock; empty set gets
+  the workspace default), `new_kinds_round_trip_and_restore_defaults_uses_fresh_ids`
+  (and an unknown future kind is removed), `monitor_pages_keep_limits_and_main_area_ordering`.
+  The eight-entry catalog assertion became `latency_distribution_widget_is_in_the_catalog`.
+- Native Linux/Xvfb: preferences created by the previous build (Studio 2 page
+  with Logs hidden and a Latency Distribution added, plus a duplicated "Perf"
+  page) opened with the new build on the "Perf" page unchanged; after exit the
+  rewritten file's Studio 2 section was byte-identical and gained the Monitor and
+  Studio keys. With a fresh profile, Studio (1440×900 Dark) matched the previous
+  build's two-chart strip, and a Local Demo run in Monitor matched the previous
+  build's Monitor screenshot (KPI row, RPS + Latency, Status + Active users,
+  logs at the bottom). In Monitor: added Latency Distribution to the Main area,
+  dragged it before Endpoint Breakdown, used Move earlier, hid Requests per
+  Second with × and restored it in Layouts…, removed HTTP Status Distribution,
+  Save layout; after a restart the layout was intact and opening the history run
+  rendered it with that run's data. A history summary with `latency_distribution`
+  stripped showed "No latency distribution recorded for this run". Light theme
+  checked; at 900×720 the KPI cards wrap to two columns and the toolbar's layout
+  controls wrap to their own row (fixed during this check: the layout selector
+  was clipped). Studio: + Widget lists the catalog directly (Bottom only), the
+  dock selector is disabled with an explanation, compact width switches the
+  strip to tabs as before; added Latency Distribution, moved it up, removed
+  Latency, saved. Studio 2 in the same profile kept its default page.
+- Not checked: macOS/Windows, the Right dock in Monitor with many widgets, and
+  long runs with many Monitor widgets.
+
 ## Arrival-rate stages update
 
 The Arrival Rate (open) profile can ramp its rate: **Ramp the rate** seeds three

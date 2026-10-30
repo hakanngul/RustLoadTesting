@@ -72,6 +72,18 @@
   minimum and maximum, built from recorded values so counts sum to the sample
   count. Log spacing keeps both the bulk and the tail visible; P50/P95/P99 come
   from the same histogram, never from the bars.
+- Studio, Studio 2 and Monitor share one widget/dashboard implementation,
+  parameterized by `dashboard::Workspace` (allowed docks, dashboard-only
+  support, default page, data source). Each workspace has an independent page
+  set: Studio 2 keeps the historical `dashboards` preference key, Monitor and
+  Studio add `monitor_dashboards` / `studio_dashboards` with serde defaults equal
+  to their default pages, so older preferences load unchanged. Monitor adds a
+  `Main` dock (the grid under its fixed run header); Studio offers only Bottom
+  because its Load Configuration panel occupies the right. Monitor widgets read
+  the snapshot Monitor shows (live or history); Studio and Studio 2 widgets read
+  the current run. Two kinds were added to rebuild Monitor: `KpiCards` and
+  `RequestsPerSecond` (Total/Success/Failed). Restoring defaults assigns fresh
+  widget IDs so stale plot state never attaches to restored widgets.
 - Arrival Rate is the open model. A scheduler starts iteration `k` at
   `k / rate` seconds (fixed slots from t=0, so a late wake-up catches up instead
   of lowering the rate) on an idle VU from a pool of `users`. With no idle VU

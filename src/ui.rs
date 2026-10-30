@@ -3,7 +3,7 @@ mod dashboard;
 mod import;
 mod studio2;
 
-use crate::dashboard::{DashboardPage, Dashboards, Dock, Span, Widget, WidgetKind};
+use crate::dashboard::{DashboardPage, Dashboards, Dock, Span, Widget, WidgetKind, Workspace};
 
 use crate::{
     core::*,
@@ -22,24 +22,65 @@ use std::{
     time::Duration,
 };
 
-#[derive(Default, Serialize, Deserialize)]
-struct Preferences {
-    light: bool,
-    plan_path: String,
+/// UI preferences stored by eframe. Layouts contain no plan, auth or request data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Preferences {
+    pub light: bool,
+    pub plan_path: String,
     #[serde(default)]
-    workspace: Workspace,
+    pub workspace: Workspace,
+    /// Studio 2 pages. The key predates per-workspace layouts and is kept as is.
     #[serde(default)]
-    dashboards: Dashboards,
+    pub dashboards: Dashboards,
+    #[serde(default = "monitor_dashboards")]
+    pub monitor_dashboards: Dashboards,
+    #[serde(default = "studio_dashboards")]
+    pub studio_dashboards: Dashboards,
     /// Run comparison noise band in percent; `None` uses the default.
     #[serde(default)]
-    compare_noise_pct: Option<f64>,
+    pub compare_noise_pct: Option<f64>,
 }
-#[derive(Default, PartialEq, Clone, Copy, Serialize, Deserialize)]
-enum Workspace {
-    #[default]
-    Studio,
-    Studio2,
-    Monitor,
+fn monitor_dashboards() -> Dashboards {
+    Workspace::Monitor.default_dashboards()
+}
+fn studio_dashboards() -> Dashboards {
+    Workspace::Studio.default_dashboards()
+}
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            light: false,
+            plan_path: String::new(),
+            workspace: Workspace::default(),
+            dashboards: Dashboards::default(),
+            monitor_dashboards: monitor_dashboards(),
+            studio_dashboards: studio_dashboards(),
+            compare_noise_pct: None,
+        }
+    }
+}
+impl Preferences {
+    /// The independent page set of `workspace`.
+    pub fn dashboards_for(&self, workspace: Workspace) -> &Dashboards {
+        match workspace {
+            Workspace::Studio => &self.studio_dashboards,
+            Workspace::Studio2 => &self.dashboards,
+            Workspace::Monitor => &self.monitor_dashboards,
+        }
+    }
+    pub fn dashboards_for_mut(&mut self, workspace: Workspace) -> &mut Dashboards {
+        match workspace {
+            Workspace::Studio => &mut self.studio_dashboards,
+            Workspace::Studio2 => &mut self.dashboards,
+            Workspace::Monitor => &mut self.monitor_dashboards,
+        }
+    }
+    /// Repair every restored page set for its own workspace.
+    pub fn normalize(&mut self) {
+        for workspace in Workspace::ALL {
+            self.dashboards_for_mut(workspace).normalize_for(workspace);
+        }
+    }
 }
 #[derive(PartialEq, Clone, Copy)]
 enum FileAction {
@@ -76,8 +117,7 @@ pub struct RustLoadApp {
     confirm_discard: bool,
     pending_new: bool,
     close_dialog: bool,
-    chart_latency: bool,
-    studio2_bottom_tab: Option<u64>,
+    bottom_tabs: std::collections::HashMap<Workspace, u64>,
     layout_manager_open: bool,
     layout_edit: bool,
     new_layout_name: String,
@@ -99,7 +139,7 @@ impl RustLoadApp {
             .storage
             .and_then(|s| eframe::get_value(s, "rustload-preferences"))
             .unwrap_or_default();
-        prefs.dashboards.normalize();
+        prefs.normalize();
         let workspace = prefs.workspace;
         let mut app = Self {
             plan: TestPlan::default(),
@@ -134,8 +174,7 @@ impl RustLoadApp {
             confirm_discard: false,
             pending_new: false,
             close_dialog: false,
-            chart_latency: false,
-            studio2_bottom_tab: None,
+            bottom_tabs: Default::default(),
             layout_manager_open: false,
             layout_edit: false,
             new_layout_name: String::new(),
@@ -440,9 +479,7 @@ impl RustLoadApp {
                         self.file_action = Some(FileAction::Export);
                         self.dialog_path = "rustload-report.html".into();
                     }
-                    if self.workspace == Workspace::Studio2 {
-                        self.dashboard_toolbar(ui, p);
-                    }
+                    self.dashboard_toolbar(ui, p, self.workspace);
                     ui.label(
                         RichText::new(if self.dirty { "Unsaved changes" } else { "" })
                             .color(p.warning)
@@ -771,34 +808,7 @@ impl RustLoadApp {
                     egui::ScrollArea::vertical().show(ui, |ui| self.configuration(ui, p));
                 });
         }
-        egui::TopBottomPanel::bottom("studio_charts")
-            .resizable(true)
-            .default_height(220.0)
-            .height_range(120.0..=450.0)
-            .show(ctx, |ui| {
-                if compact {
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.chart_latency, false, "Throughput");
-                        ui.selectable_value(&mut self.chart_latency, true, "Latency");
-                    });
-                    chart(
-                        ui,
-                        &self.live,
-                        p,
-                        if self.chart_latency {
-                            Chart::Latency
-                        } else {
-                            Chart::Rps
-                        },
-                        125.0,
-                    );
-                } else {
-                    ui.columns(2, |columns| {
-                        chart(&mut columns[0], &self.live, p, Chart::Rps, 145.0);
-                        chart(&mut columns[1], &self.live, p, Chart::Latency, 145.0);
-                    });
-                }
-            });
+        self.dashboard_bottom(ctx, p, Workspace::Studio);
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if compact {
@@ -857,17 +867,17 @@ impl RustLoadApp {
         }
     }
     fn monitor(&mut self, ctx: &egui::Context, p: Palette) {
-        egui::TopBottomPanel::bottom("monitor_logs")
-            .resizable(true)
-            .default_height(180.0)
-            .height_range(120.0..=400.0)
-            .show(ctx, |ui| self.logs(ui, p));
+        let ws = Workspace::Monitor;
+        let compact = ctx.content_rect().width() < 1150.0;
+        self.dashboard_bottom(ctx, p, ws);
+        self.dashboard_right(ctx, p, ws, compact);
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.comparison.is_some() {
                 self.comparison_view(ui, p);
                 return;
             }
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("monitor_main").show(ui, |ui| {
+                // Fixed header; everything below it is the customizable dashboard.
                 let s = &self.snapshot;
                 ui.horizontal_wrapped(|ui| {
                     ui.heading(if s.name.is_empty() { "Monitor" } else { &s.name });
@@ -877,53 +887,20 @@ impl RustLoadApp {
                 if s.run_id.is_empty() {
                     ui.add_space(24.0); ui.heading("Ready when you are");
                     ui.label("Build a test in Studio, authorize its targets and Run. Real metrics will appear here.");
-                    return;
-                }
-                if let Some(issue) = &s.issue { ui.colored_label(p.warning, issue); }
-                ui.label(RichText::new("RPS and data/sec: last 5s · Percentiles: entire run, fully read responses · Latency in ms").small().color(p.muted));
-                warmup_line(ui, s, p);
-                slo_badges(ui, s, p);
-                let cards = [
-                    ("Virtual Users", format!("{} / {}", s.active_users, s.target_users), p.success),
-                    ("Requests / sec", format!("{:.1}", s.rps), p.accent),
-                    ("Data / sec", format!("{}/s", format_bytes(s.bytes_rate)), p.accent),
-                    ("P50 Latency", latency_label(&s.latency, s.latency.p50), p.p50),
-                    ("P95 Latency", latency_label(&s.latency, s.latency.p95), p.p95),
-                    ("P99 Latency", latency_label(&s.latency, s.latency.p99), p.p99),
-                    ("Error Rate", format!("{:.2}%", s.counts.error_rate()), p.error),
-                    ("Request Count", s.counts.completed.to_string(), p.text),
-                ];
-                let columns = if ui.available_width() > 1100.0 { cards.len() } else if ui.available_width() > 750.0 { 4 } else { 2 };
-                for row in cards.chunks(columns) {
-                    ui.columns(columns, |cols| {
-                        for (col, (label, value, color)) in cols.iter_mut().zip(row) { metric(col, p, label, value, *color); }
-                    });
-                    ui.add_space(8.0);
-                }
-                if ui.available_width() > 800.0 {
-                    ui.columns(2, |cols| {
-                        chart(&mut cols[0], s, p, Chart::Rps, 130.0);
-                        chart(&mut cols[1], s, p, Chart::Latency, 130.0);
-                    });
-                    ui.add_space(8.0);
-                    ui.columns(2, |cols| {
-                        status_panel(&mut cols[0], s, p);
-                        chart(&mut cols[1], s, p, Chart::Users, 100.0);
-                    });
+                    if !self.layout_edit { return; }
+                    ui.add_space(16.0);
                 } else {
-                    chart(ui, s, p, Chart::Rps, 130.0);
-                    chart(ui, s, p, Chart::Latency, 130.0);
-                    status_panel(ui, s, p);
-                    chart(ui, s, p, Chart::Users, 100.0);
+                    if let Some(issue) = &s.issue { ui.colored_label(p.warning, issue); }
+                    ui.label(RichText::new("RPS and data/sec: last 5s · Percentiles: entire run, fully read responses · Latency in ms").small().color(p.muted));
+                    warmup_line(ui, s, p);
+                    slo_badges(ui, s, p);
                 }
-                ui.add_space(8.0);
-                endpoint_panel(ui, s, p);
-                ui.add_space(8.0);
+                if compact {
+                    self.dashboard_compact_right(ui, p, ws);
+                }
+                self.dashboard_main(ui, p, ws);
             });
         });
-    }
-    fn logs(&mut self, ui: &mut egui::Ui, p: Palette) {
-        self.logs_for(ui, p, false);
     }
     fn logs_for(&mut self, ui: &mut egui::Ui, p: Palette, live: bool) {
         theme::panel(p).show(ui, |ui| {
@@ -1412,7 +1389,15 @@ fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
     theme::panel(p).show(ui, |ui| {
         ui.strong("Latency Distribution (ms) · whole run");
         if s.latency_distribution.is_empty() {
-            ui.label(RichText::new("Waiting for measurements…").color(p.muted));
+            // Runs saved before the distribution existed have none to show.
+            ui.label(
+                RichText::new(if s.state.terminal() {
+                    "No latency distribution recorded for this run"
+                } else {
+                    "Waiting for measurements…"
+                })
+                .color(p.muted),
+            );
         }
         let bars: Vec<Bar> = s
             .latency_distribution

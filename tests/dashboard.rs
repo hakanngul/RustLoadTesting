@@ -1,4 +1,5 @@
 use rustload::dashboard::*;
+use rustload::ui::Preferences;
 
 #[test]
 fn hiding_every_widget_frees_both_docks_and_is_restorable() {
@@ -187,8 +188,7 @@ fn canvas_reorders_all_widgets_without_losing_workbench_docks() {
 }
 
 #[test]
-fn latency_distribution_widget_is_an_eighth_catalog_entry() {
-    assert_eq!(WidgetKind::ALL.len(), 8);
+fn latency_distribution_widget_is_in_the_catalog() {
     assert!(WidgetKind::ALL.contains(&WidgetKind::LatencyHistogram));
     let mut page = DashboardPage::default();
     let id = page.add(WidgetKind::LatencyHistogram, Dock::Right).unwrap();
@@ -198,4 +198,229 @@ fn latency_distribution_widget_is_an_eighth_catalog_entry() {
         restored.widgets.iter().find(|w| w.id == id).unwrap().kind,
         WidgetKind::LatencyHistogram
     );
+}
+
+fn layout(page: &DashboardPage) -> Vec<(WidgetKind, Dock, Span, bool)> {
+    page.widgets
+        .iter()
+        .map(|w| (w.kind, w.dock, w.span, w.visible))
+        .collect()
+}
+
+#[test]
+fn workspace_defaults_reproduce_the_built_in_layouts() {
+    use {Dock::*, Span::*, WidgetKind::*};
+    assert_eq!(Workspace::Studio2.default_page(), DashboardPage::default());
+    assert_eq!(
+        Workspace::Studio2.default_dashboards(),
+        Dashboards::default()
+    );
+    let monitor = Workspace::Monitor.default_page();
+    assert!(!monitor.dashboard_only);
+    assert_eq!(
+        layout(&monitor),
+        [
+            (KpiCards, Main, Full, true),
+            (RequestsPerSecond, Main, Medium, true),
+            (Latency, Main, Medium, true),
+            (StatusCodes, Main, Medium, true),
+            (ActiveUsers, Main, Medium, true),
+            (Endpoints, Main, Full, true),
+            (Logs, Bottom, Full, true),
+        ]
+    );
+    let studio = Workspace::Studio.default_page();
+    assert_eq!(
+        layout(&studio),
+        [
+            (RequestsPerSecond, Bottom, Medium, true),
+            (Latency, Bottom, Medium, true),
+        ]
+    );
+    for ws in Workspace::ALL {
+        let mut normalized = ws.default_dashboards();
+        normalized.normalize_for(ws);
+        assert_eq!(normalized, ws.default_dashboards(), "{ws:?}");
+        assert!(
+            ws.default_page()
+                .widgets
+                .iter()
+                .all(|w| ws.docks().contains(&w.dock))
+        );
+    }
+}
+
+#[test]
+fn old_preferences_keep_studio2_layouts_and_gain_workspace_defaults() {
+    // Shape written before per-workspace layouts: only the Studio 2 set exists.
+    let old = r#"{"light":true,"plan_path":"plan.json","workspace":"Studio2",
+        "dashboards":{"active_id":2,"next_page_id":3,"pages":[
+          {"id":1,"name":"Studio 2","widgets":[
+            {"id":1,"kind":"Throughput","dock":"Bottom","visible":true,"span":"Small"},
+            {"id":3,"kind":"Logs","dock":"Bottom","visible":false,"span":"Small"},
+            {"id":5,"kind":"LatencyHistogram","dock":"Right","visible":true,"span":"Medium"}],
+           "bottom_height":300.0,"right_width":400.0,"next_widget_id":6,
+           "dashboard_only":false,"card_height":260.0},
+          {"id":2,"name":"Perf","widgets":[],"bottom_height":255.0,"right_width":315.0,
+           "next_widget_id":5,"dashboard_only":true,"card_height":320.0}]},
+        "compare_noise_pct":null}"#;
+    let mut prefs: Preferences = serde_json::from_str(old).unwrap();
+    let studio2 = prefs.dashboards.clone();
+    prefs.normalize();
+    assert_eq!(prefs.dashboards, studio2);
+    assert_eq!(prefs.dashboards.active().name, "Perf");
+    assert!(prefs.dashboards.active().dashboard_only);
+    assert_eq!(
+        prefs.monitor_dashboards,
+        Workspace::Monitor.default_dashboards()
+    );
+    assert_eq!(
+        prefs.studio_dashboards,
+        Workspace::Studio.default_dashboards()
+    );
+    assert_eq!(prefs.workspace, Workspace::Studio2);
+    // A fresh install gets every workspace's default set.
+    let fresh = Preferences::default();
+    for ws in Workspace::ALL {
+        assert_eq!(fresh.dashboards_for(ws), &ws.default_dashboards());
+    }
+    // Saved layouts never carry plan, auth or request data.
+    let saved = serde_json::to_string(&prefs).unwrap();
+    for field in ["url", "header", "auth", "token", "body"] {
+        assert!(!saved.to_ascii_lowercase().contains(field), "{field}");
+    }
+}
+
+#[test]
+fn workspace_page_sets_are_independent() {
+    let mut prefs = Preferences::default();
+    let studio2 = prefs.dashboards.clone();
+    let studio = prefs.studio_dashboards.clone();
+    let monitor = prefs.dashboards_for_mut(Workspace::Monitor);
+    monitor
+        .active_mut()
+        .add(WidgetKind::LatencyHistogram, Dock::Main)
+        .unwrap();
+    monitor.active_mut().hide(7);
+    monitor
+        .create_for(Workspace::Monitor, "Errors", false)
+        .unwrap();
+    assert_eq!(prefs.dashboards, studio2);
+    assert_eq!(prefs.studio_dashboards, studio);
+    let restored: Preferences =
+        serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+    assert_eq!(restored, prefs);
+    let first = &restored.monitor_dashboards.pages[0];
+    assert_eq!(
+        first.widgets.last().unwrap().kind,
+        WidgetKind::LatencyHistogram
+    );
+    assert!(!first.widgets.iter().find(|w| w.id == 7).unwrap().visible);
+    // Blank Monitor/Studio pages stay workbench pages beside the fixed areas.
+    let blank = restored.monitor_dashboards.active();
+    assert_eq!(blank.name, "Errors");
+    assert!(blank.widgets.is_empty() && !blank.dashboard_only);
+}
+
+#[test]
+fn normalization_fits_pages_to_their_workspace() {
+    let mut studio = Workspace::Studio2.default_dashboards();
+    studio.active_mut().dashboard_only = true;
+    studio
+        .active_mut()
+        .add(WidgetKind::KpiCards, Dock::Main)
+        .unwrap();
+    let ids: Vec<_> = studio.active().widgets.iter().map(|w| w.id).collect();
+    let mut as_studio2 = studio.clone();
+    as_studio2.normalize_for(Workspace::Studio2);
+    assert!(as_studio2.active().dashboard_only);
+    assert!(
+        as_studio2
+            .active()
+            .widgets
+            .iter()
+            .all(|w| w.dock != Dock::Main)
+    );
+    studio.normalize_for(Workspace::Studio);
+    // Studio keeps Load Configuration on the right: Bottom only, no dashboard-only.
+    assert!(!studio.active().dashboard_only);
+    assert!(
+        studio
+            .active()
+            .widgets
+            .iter()
+            .all(|w| w.dock == Dock::Bottom)
+    );
+    assert_eq!(
+        studio
+            .active()
+            .widgets
+            .iter()
+            .map(|w| w.id)
+            .collect::<Vec<_>>(),
+        ids
+    );
+    let mut empty = Dashboards {
+        pages: vec![],
+        ..Dashboards::default()
+    };
+    empty.normalize_for(Workspace::Monitor);
+    assert_eq!(empty, Workspace::Monitor.default_dashboards());
+}
+
+#[test]
+fn new_kinds_round_trip_and_restore_defaults_uses_fresh_ids() {
+    let mut page = Workspace::Monitor.default_page();
+    page.remove(1);
+    let json = serde_json::to_string(&page).unwrap();
+    assert!(json.contains("\"RequestsPerSecond\"") && !json.contains("\"KpiCards\""));
+    let mut restored: DashboardPage = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, page);
+    restored.reset_widgets(Workspace::Monitor.default_page().widgets);
+    assert_eq!(
+        layout(&restored),
+        layout(&Workspace::Monitor.default_page())
+    );
+    assert!(
+        restored.widgets.iter().all(|w| w.id >= 8),
+        "removed IDs are not reused"
+    );
+    let ids: std::collections::BTreeSet<_> = restored.widgets.iter().map(|w| w.id).collect();
+    assert_eq!(ids.len(), restored.widgets.len());
+    // An older build that lacks a kind normalizes it away.
+    let mut future: DashboardPage =
+        serde_json::from_str(&json.replacen("RequestsPerSecond", "SomeFutureWidget", 1)).unwrap();
+    future.normalize();
+    assert!(future.widgets.iter().all(|w| w.kind != WidgetKind::Unknown));
+    assert_eq!(future.widgets.len(), page.widgets.len() - 1);
+}
+
+#[test]
+fn monitor_pages_keep_limits_and_main_area_ordering() {
+    let mut all = Workspace::Monitor.default_dashboards();
+    for i in 1..MAX_PAGES {
+        all.create_for(Workspace::Monitor, &format!("Page {i}"), true)
+            .unwrap();
+    }
+    assert!(
+        all.create_for(Workspace::Monitor, "One more", false)
+            .is_err()
+    );
+    let page = all.active_mut();
+    // Reordering stays within the dock; Logs in Bottom is unaffected.
+    page.shift(6, false);
+    assert_eq!(
+        page.visible(Dock::Main)
+            .iter()
+            .map(|w| w.id)
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 4, 6, 5]
+    );
+    page.place(7, Dock::Main, Some(1));
+    assert_eq!(page.visible(Dock::Main)[0].kind, WidgetKind::Logs);
+    assert!(page.visible(Dock::Bottom).is_empty());
+    while page.widgets.len() < MAX_WIDGETS {
+        page.add(WidgetKind::KpiCards, Dock::Right).unwrap();
+    }
+    assert!(page.add(WidgetKind::Logs, Dock::Main).is_err());
 }
