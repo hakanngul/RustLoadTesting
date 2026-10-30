@@ -795,3 +795,88 @@ fn error_groups_are_bounded_and_ordered() {
     assert_eq!(clip("abcdef", 3), "abc…");
     assert_eq!(clip("abc", 3), "abc");
 }
+
+#[test]
+fn secret_fields_keep_whole_variable_references_only() {
+    let field = |name: &str, value: &str, secret| Field {
+        name: name.into(),
+        value: value.into(),
+        secret,
+    };
+    let mut plan = TestPlan {
+        variables: vec![
+            field("api_key", "literal-variable", true),
+            field("ref_var", "{{other}}", true),
+        ],
+        ..TestPlan::default()
+    };
+    plan.requests[0].headers = vec![
+        field("X-API-Key", "{{api_key}}", true),
+        field("Authorization", "Bearer {{token}}", false),
+        field("Cookie", "{{session_cookie}}", false),
+        field("X-Plain", "visible", false),
+        field("X-Literal", "literal-header", true),
+        field("X-Spaced", "{{ api_key }}", true),
+        field("X-Two", "{{a}}{{b}}", true),
+        field("X-Dash", "{{api-key}}", true),
+    ];
+    plan.requests[0].query = vec![
+        field("api_key", "{{api_key}}", false),
+        field("token", "literal-query", false),
+    ];
+    assert!(is_variable_reference("{{api_key_2}}"));
+    for not_ref in [
+        "",
+        "{{}}",
+        "{{a}}{{b}}",
+        "{{ a }}",
+        "x{{a}}",
+        "{{a-b}}",
+        "{a}",
+    ] {
+        assert!(!is_variable_reference(not_ref), "{not_ref}");
+    }
+    let json = serde_json::to_string(&plan).unwrap();
+    for literal in [
+        "literal-variable",
+        "Bearer {{token}}",
+        "literal-header",
+        "{{ api_key }}",
+        "{{a}}{{b}}",
+        "{{api-key}}",
+        "literal-query",
+    ] {
+        assert!(!json.contains(literal), "{literal} was saved");
+    }
+    let restored: TestPlan = serde_json::from_str(&json).unwrap();
+    let values = |fields: &[Field]| -> Vec<(String, String, bool)> {
+        fields
+            .iter()
+            .map(|f| (f.name.clone(), f.value.clone(), f.secret))
+            .collect()
+    };
+    let h = values(&restored.requests[0].headers);
+    assert_eq!(h[0], ("X-API-Key".into(), "{{api_key}}".into(), true));
+    assert_eq!(h[1].1, "");
+    assert_eq!(h[2], ("Cookie".into(), "{{session_cookie}}".into(), true));
+    assert_eq!(h[3].1, "visible");
+    assert!(h[4..].iter().all(|f| f.1.is_empty() && f.2));
+    let q = values(&restored.requests[0].query);
+    assert_eq!(q[0], ("api_key".into(), "{{api_key}}".into(), true));
+    assert_eq!(q[1].1, "");
+    let v = values(&restored.variables);
+    assert_eq!(v[0].1, "");
+    assert_eq!(v[1].1, "{{other}}");
+
+    // History and reports use the redacted plan: same rule.
+    let redacted = serde_json::to_string(&plan.redacted()).unwrap();
+    assert!(redacted.contains("{{api_key}}"));
+    for literal in [
+        "literal-variable",
+        "literal-header",
+        "literal-query",
+        "Bearer {{token}}",
+    ] {
+        assert!(!redacted.contains(literal), "{literal} in history");
+    }
+}

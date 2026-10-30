@@ -21,7 +21,8 @@ in optional docks or a dashboard-only grid. Layout edits never mutate engine sta
 
 Safety: explicit target acknowledgement; HTTP(S) only; no redirects, retries or
 cookie jar; bounded body reads; shared pacing; cancellable waits; graceful stop.
-Secret values are session-only and are removed from plans and result snapshots.
+Secret values are session-only and are removed from plans and result snapshots;
+a secret that is exactly one `{{variable}}` reference is kept as that reference.
 
 Validation targets: local fixture scenario, 100 VU, pacing, cancellation, metrics,
 serialization, history and exports. Linux results do not establish macOS support.

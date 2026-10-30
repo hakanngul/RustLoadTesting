@@ -2268,7 +2268,7 @@ fn field_editor(ui: &mut egui::Ui, fields: &mut Vec<Field>, id: &str) {
     if ui.button("+ Add field").clicked() {
         fields.push(Field::default());
     }
-    ui.small("Secret values are omitted from saved plans, history and reports.");
+    ui.small("Secret values are omitted from saved plans, history and reports; a value that is exactly one {{variable}} reference is kept.");
 }
 fn request_editor(ui: &mut egui::Ui, r: &mut Request, tab: &mut usize, p: Palette) {
     ui.heading("HTTP Request");

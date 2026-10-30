@@ -175,8 +175,11 @@ test ve belgeleri aynı kapsamda güncelle.
 
 Token, parola, Authorization/Cookie ve secret işaretli alanların gerçek değerlerini
 plan, geçmiş, log, rapor, ekran görüntüsü veya Git'e yazma. Mevcut secret-safe
-serde/redaction davranışını kullan; `{{access_token}}` gibi değişken referanslarını
-bozma. Response body'lerini loglama. Hata nedenleri (log ve `errors` grupları)
+serde/redaction davranışını kullan: Auth alanları ve secret `Field`'lar (header,
+query, değişken) yalnızca değer tam olarak tek bir `{{ad}}` referansıysa
+(`is_variable_reference`) bu referansla kaydedilir; düz değer ve karışık metin
+(`Bearer {{token}}`) düşürülür. `{{access_token}}`, `{{api_key}}` gibi
+referansları bozma. Response body'lerini loglama. Hata nedenleri (log ve `errors` grupları)
 yalnızca durum kodu, plan değerleri ve sabit etiketlerden oluşur; reqwest hata
 metni URL içerebildiği için gösterilmez/saklanmaz. HTML escape ve CSV formula-injection
 korumalarını koru. Auth/request verilerini dashboard tercihlerine ekleme.

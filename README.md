@@ -237,18 +237,36 @@ the requests and warnings, then add them to the plan or replace its requests.
 - HAR import can keep only XHR/fetch requests. Only requests are read; HAR
   responses are never imported. Files up to 50 MiB, at most 500 requests.
 - Authorization, Cookie and other credential values are marked secret: they
-  work in the current session but are never saved, like any other secret.
-- **OpenAPI (JSON)** takes the path of an OpenAPI 3.x or Swagger 2.0 JSON file
-  and creates one request per GET/POST/PUT/PATCH/DELETE operation (sorted by
-  path). The base URL comes from the first server (variables at their defaults)
+  work in the current session but are never saved, like any other secret. A
+  secret that is exactly one `{{variable}}` reference is saved as that reference.
+- **OpenAPI (JSON)** takes the path of an OpenAPI 3.x or Swagger 2.0 JSON file.
+  **Preview** lists every GET/POST/PUT/PATCH/DELETE operation (by path, then
+  method) with its method, path, name and tags. Filter the list by text (path,
+  name or operationId), method or tag; **Select all** and **None** apply to the
+  operations the filters show. All operations start checked and only checked
+  ones are imported. The dialog shows how many are selected and disables
+  Import while the selection would take the plan past 500 requests.
+- The base URL comes from the first server (variables at their defaults)
   unless you enter one, which is the usual way to aim a spec at a local or
   staging target. Path parameters become `{{variables}}` added to the plan with
-  their example values; required query and header parameters and JSON bodies
-  are filled from `example`, `examples`, `default`, `enum` or the schema's
-  property examples. Bearer and OAuth security becomes `{{access_token}}`, a
-  secret variable you fill in before running; Basic Auth needs its credentials;
-  other schemes, cookie parameters and non-JSON bodies are listed in the
-  preview. YAML documents are not supported yet; convert them to JSON first.
+  their example values; required query and header parameters use `example`,
+  `examples`, `default` or `enum` values.
+- JSON bodies use the document's values (`example`, `examples`, `default`,
+  `enum`, also inside properties). `allOf` members are merged; `oneOf`/`anyOf`
+  use the first option. Where the document has no value, a type placeholder is
+  filled in: required properties (all of them when none is marked required),
+  `""` for strings (`1970-01-01T00:00:00Z`, `1970-01-01`, a zero UUID or
+  `user@example.com` for date-time, date, uuid and email formats), `0` or the
+  `minimum` for numbers, `false`, and one-item arrays. Recursive schemas stop at
+  the first repetition. These are placeholders, not test data: the preview
+  counts the bodies built from schema types so you can review them.
+- Bearer and OAuth security becomes `{{access_token}}`; API keys in a header or
+  query parameter become that header or parameter with `{{api_key}}`
+  (`{{api_key_2}}`… for further schemes). These are secret plan variables you
+  fill in before running; the saved plan keeps the references, never the
+  values. Basic Auth needs its credentials. API keys in cookies, other schemes,
+  cookie parameters and non-JSON bodies are listed in the preview. YAML
+  documents are not supported yet; convert them to JSON first.
 
 ### SLO thresholds
 
@@ -272,9 +290,11 @@ close. Closing warns about unsaved edits and stops active work before exiting.
 ### Credentials and saved data
 
 Literal auth secrets and fields marked secret are omitted from saved plans,
-history, and reports. Auth fields containing only a variable reference, such as
-`{{access_token}}`, keep that reference. Re-enter omitted secret values when you
-reopen a plan.
+history, and reports. Auth fields, headers, query parameters and variables whose
+value is exactly one variable reference, such as `{{access_token}}` or
+`{{api_key}}`, keep that reference; literal values and mixed text such as
+`Bearer {{token}}` are dropped. Re-enter omitted secret values when you reopen a
+plan.
 
 Request bodies stay in the session unless you enable the body-persistence option.
 Use secret variables for credentials instead of embedding them in a saved body.

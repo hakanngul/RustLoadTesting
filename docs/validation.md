@@ -1,5 +1,53 @@
 # Validation evidence
 
+## OpenAPI operation picker update
+
+The OpenAPI import parses the document once and lets you choose operations
+(text, method and tag filters; Select all / None for the filtered set; 500-request
+limit enforced in the dialog). JSON bodies merge `allOf`, take the first
+`oneOf`/`anyOf` and otherwise use type placeholders. API keys in a header or
+query become `{{api_key}}` references with secret plan variables, and a secret
+field whose value is exactly one `{{name}}` reference is now saved as that
+reference.
+
+- 83 tests pass (6 compare, 24 core/report, 16 dashboard, 24 engine, 13 import);
+  fmt, strict Clippy, build and `git diff --check` succeed.
+- New import tests: `openapi_picker_lists_operations_and_builds_the_selection`
+  (keys, order, tags, filter matching, selection in document order with
+  consecutive IDs, variables and warnings only for the selection),
+  `openapi_selection_is_capped_at_the_plan_limit` (501 operations listed, 500
+  built), `openapi_bodies_merge_all_of_and_take_the_first_one_of`,
+  `openapi_type_skeletons_use_formats_and_stop_at_recursion` (formats, minimum,
+  nullable 3.1 types, required-only objects, recursive `$ref`, warning counts),
+  `openapi_api_keys_become_secret_variable_references` (header/query, AND/OR
+  requirements, anonymous alternative, cookie warning, Swagger 2.0, saved plan
+  and history snapshot keep references but never key values). The existing
+  OpenAPI test now expects a placeholder for the example-less `age`.
+- `secret_fields_keep_whole_variable_references_only` (core): references are
+  kept in plan JSON and the redacted history/report plan; literals, `Bearer
+  {{token}}`, `{{ a }}`, `{{a}}{{b}}` and `{{api-key}}` are dropped.
+- `selected_openapi_operations_with_api_keys_reach_the_server` (engine): two of
+  three operations selected by tag run against the localhost fixture with zero
+  failures; the fixture echoes the header key and the query key, and the
+  `allOf` placeholder body is `{"id": <zero UUID>, "qty": 1}`.
+- Native Linux/Xvfb (fresh profile, fixture on 127.0.0.1:8080): a 30-operation
+  spec with seven tags, apiKey header security and a cookie apiKey. Preview
+  listed all operations checked; None, tag filter "echo" + Select all (5),
+  case-insensitive text filter "HEALTH" and a click on the row label selected
+  six; Replace imported six requests and added `api_key`. With the key entered,
+  a 6 s run sent 120 requests, 0.00 % errors. Save wrote `{{api_key}}` in every
+  header and an empty `api_key` value; the literal key was found in neither the
+  plan, the history database nor the preferences. Light theme at 900×720: the
+  list, filters and warnings fit; the method filter showed the two PATCH
+  operations. A 600-operation spec showed "600 operations selected, but a plan
+  holds at most 500 requests (6 already in the plan)…" with Import disabled;
+  the "bulk" tag (300) re-enabled it. The cURL tab still previews as before.
+  Fixed during this check: the filter row's combo boxes were vertically offset,
+  and the dialog overflowed the window (the list and warnings now share the
+  height left in the window).
+- Not checked: macOS/Windows, specs with thousands of operations in the
+  dialog, YAML.
+
 ## Workspace widgets update
 
 Monitor and Studio use the Studio 2 widget system with their own page sets.
