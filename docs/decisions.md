@@ -38,12 +38,32 @@
 - OpenAPI import reads JSON only (OpenAPI 3.x, Swagger 2.0) with serde_json, so
   no new dependency; YAML would need one and waits for a user decision. Local
   `$ref`s are followed (depth 16). Operations come in path order (serde_json
-  maps are sorted). Values come only from the document's examples/defaults,
-  never invented; missing ones are left empty and listed. Path parameters
-  become plan variables (names sanitized to `[A-Za-z0-9_]`), so the URL keeps a
-  fixed scheme and host. Bearer/OAuth becomes `{{access_token}}`, which the
-  secret-safe serializer keeps as a reference while its value stays session-only.
-  Existing plan variables of the same name are never overwritten.
+  maps are sorted; within a path GET/POST/PUT/PATCH/DELETE). Parameter values
+  come only from the document's examples/defaults; missing ones are left empty
+  and listed. Path parameters become plan variables (names sanitized to
+  `[A-Za-z0-9_]`), so the URL keeps a fixed scheme and host. Bearer/OAuth
+  becomes `{{access_token}}`, which the secret-safe serializer keeps as a
+  reference while its value stays session-only. Existing plan variables of the
+  same name are never overwritten.
+- The OpenAPI document is parsed once (`parse_openapi`) into candidate
+  operations with stable keys "METHOD path"; the dialog keeps a key set and
+  `OpenApiSpec::build` turns the selection into requests, variables and
+  warnings (only for the selected operations) without re-parsing. All
+  operations start selected; Import is blocked while the selection would pass
+  the 500-request plan limit, and `build` itself stops at 500.
+- JSON bodies: document values first; `allOf` merges members' properties,
+  `required` and object examples; `oneOf`/`anyOf` take the first option.
+  Otherwise type placeholders (required properties, or all when none is
+  required; "" or a fixed value for date-time/date/uuid/email; 0 or `minimum`;
+  false; one-item arrays). Depth is bounded (8) and a `$ref` already on the
+  current path stops recursion. Placeholders are not business data; the
+  preview counts the bodies that use them. Parameters never get placeholders,
+  so missing path values stay visible.
+- Security requirements are alternatives: the first one RustLoad can fill
+  completely wins, then an anonymous `{}` one, else the first one as far as
+  possible. apiKey in a header or query becomes that field with `{{api_key}}`
+  (`api_key_2`… by scheme-name order) and a secret plan variable; apiKey in a
+  cookie is only listed because there is no cookie support.
 - Warmup is None, Duration{secs} or Requests{count}. A request is classified by
   its start: started during warmup means excluded from every result metric
   (counts, histograms, statuses, endpoints, bytes) and counted in separate
@@ -120,7 +140,12 @@
   request definition ID, never a dynamic URL. Chart retention is 900 seconds.
 - Auth secrets and explicitly secret variables/header/query values are never
   serialized. Authorization/Cookie and common credential keys are always secret.
-  Missing persisted secrets must be re-entered. No response bodies in logs.
+  One rule (`is_variable_reference`) applies to auth and secret fields alike: a
+  value that is exactly one `{{name}}` reference (name of `[A-Za-z0-9_]`) is
+  kept, because it names a variable rather than holding a credential; literal
+  values and mixed text (`Bearer {{token}}`) are dropped. The referenced secret
+  variable's own value is still never saved. Missing persisted secrets must be
+  re-entered. No response bodies in logs.
 - Plan-relative CSV paths resolve against the saved plan directory; unsaved plans
   resolve against the process working directory. Portable reports use redacted
   immutable configuration and escaped offline HTML.

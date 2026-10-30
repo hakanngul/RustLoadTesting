@@ -257,17 +257,38 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   ve 500 istek.
 - Authorization, Cookie ve diğer kimlik bilgisi değerleri secret olarak
   işaretlenir: mevcut oturumda çalışır ama diğer secret'lar gibi asla kaydedilmez.
-- **OpenAPI (JSON)**, OpenAPI 3.x veya Swagger 2.0 JSON dosyasının yolunu alır ve
-  her GET/POST/PUT/PATCH/DELETE işlemi için bir istek oluşturur (path'e göre
-  sıralı). Base URL ilk server'dan (değişkenler varsayılan değerleriyle) alınır;
-  alana bir adres girerseniz o kullanılır, böylece spesifikasyonu yerel veya
-  staging hedefe yöneltebilirsiniz. Path parametreleri, örnek değerleriyle plana
-  eklenen `{{değişkenler}}` olur; zorunlu query/header parametreleri ve JSON
-  gövdeler `example`, `examples`, `default`, `enum` veya şemadaki alan
-  örneklerinden doldurulur. Bearer ve OAuth güvenliği, çalıştırmadan önce
-  doldurmanız gereken secret `{{access_token}}` değişkenine dönüşür; Basic Auth
-  kimlik bilgisi ister; diğer şemalar, cookie parametreleri ve JSON olmayan
-  gövdeler önizlemede listelenir. YAML henüz desteklenmiyor; önce JSON'a çevirin.
+  Değeri tam olarak tek bir `{{değişken}}` referansı olan secret, bu referans
+  olarak kaydedilir.
+- **OpenAPI (JSON)**, OpenAPI 3.x veya Swagger 2.0 JSON dosyasının yolunu alır.
+  **Preview**, her GET/POST/PUT/PATCH/DELETE işlemini (önce path, sonra metot
+  sırasıyla) metot, path, ad ve etiketleriyle listeler. Liste metinle (path, ad
+  veya operationId), metotla veya etiketle filtrelenebilir; **Select all** ve
+  **None** yalnızca filtrenin gösterdiği işlemlere uygulanır. Başlangıçta tüm
+  işlemler seçilidir ve yalnızca işaretli olanlar içe aktarılır. Pencere seçili
+  işlem sayısını gösterir; seçim planı 500 isteğin üzerine çıkaracaksa Import
+  devre dışı kalır.
+- Base URL ilk server'dan (değişkenler varsayılan değerleriyle) alınır; alana
+  bir adres girerseniz o kullanılır, böylece spesifikasyonu yerel veya staging
+  hedefe yöneltebilirsiniz. Path parametreleri, örnek değerleriyle plana eklenen
+  `{{değişkenler}}` olur; zorunlu query/header parametreleri `example`,
+  `examples`, `default` veya `enum` değerlerini kullanır.
+- JSON gövdeler belgedeki değerleri (`example`, `examples`, `default`, `enum`,
+  alanların içindekiler dahil) kullanır. `allOf` üyeleri birleştirilir;
+  `oneOf`/`anyOf` için ilk seçenek alınır. Belgede değer yoksa türe göre yer
+  tutucu yazılır: zorunlu alanlar (hiçbiri zorunlu değilse tüm alanlar),
+  metinler için `""` (date-time, date, uuid ve email biçimleri için
+  `1970-01-01T00:00:00Z`, `1970-01-01`, sıfır UUID veya `user@example.com`),
+  sayılar için `0` ya da `minimum`, `false` ve tek öğeli diziler. Kendini
+  tekrarlayan şemalar ilk tekrarda durur. Bunlar test verisi değil yer
+  tutucudur: önizleme, şema türlerinden oluşturulan gövdeleri sayar ki gözden
+  geçirebilesiniz.
+- Bearer ve OAuth güvenliği `{{access_token}}` olur; header veya query'deki API
+  anahtarları o header/parametreye `{{api_key}}` (sonraki şemalar için
+  `{{api_key_2}}`…) değeriyle eklenir. Bunlar çalıştırmadan önce doldurduğunuz
+  secret plan değişkenleridir; kaydedilen plan değerleri değil yalnızca
+  referansları tutar. Basic Auth kimlik bilgisi ister. Cookie'deki API
+  anahtarları, diğer şemalar, cookie parametreleri ve JSON olmayan gövdeler
+  önizlemede listelenir. YAML henüz desteklenmiyor; önce JSON'a çevirin.
 
 ### SLO eşikleri
 
@@ -293,8 +314,10 @@ kaydedilmemiş değişiklikler için uyarı verilir ve aktif çalışma durdurul
 ### Kimlik bilgileri ve kaydedilen veriler
 
 Doğrudan girilen gizli kimlik bilgileri ve gizli işaretlenmiş alanlar planlara,
-geçmişe veya raporlara yazılmaz. Yalnızca `{{access_token}}` gibi bir değişken
-referansı içeren kimlik doğrulama alanlarında bu referans korunur. Planı yeniden
+geçmişe veya raporlara yazılmaz. Değeri tam olarak tek bir değişken referansı
+(`{{access_token}}`, `{{api_key}}` gibi) olan kimlik doğrulama alanları,
+header'lar, query parametreleri ve değişkenlerde bu referans korunur; düz
+değerler ve `Bearer {{token}}` gibi karışık metinler kaydedilmez. Planı yeniden
 açtığınızda kaydedilmeyen gizli değerleri tekrar girmeniz gerekir.
 
 Gövdeyi kaydetme seçeneğini açmadığınız sürece istek gövdeleri yalnızca oturumda

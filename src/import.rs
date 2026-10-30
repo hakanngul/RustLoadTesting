@@ -676,8 +676,11 @@ pub fn from_har(bytes: &[u8], first_id: u64, api_only: bool) -> Result<Imported,
 // ---------------------------------------------------------------- OpenAPI
 
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 
 const OPENAPI_METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
+/// Nesting limit for generated values; deeper schemas are left out.
+const SAMPLE_DEPTH: usize = 8;
 
 /// Follows local `$ref`s (`#/components/...`, `#/definitions/...`).
 fn resolve<'a>(doc: &'a Value, mut value: &'a Value) -> &'a Value {
@@ -695,14 +698,204 @@ fn resolve<'a>(doc: &'a Value, mut value: &'a Value) -> &'a Value {
     value
 }
 
-/// An example value from a parameter, media type or schema: `example`, the
-/// first of `examples`, `default`, the first `enum` value, or (for objects and
-/// arrays) one assembled from the properties' examples.
-fn sample(doc: &Value, value: &Value, depth: u8) -> Option<Value> {
-    let value = resolve(doc, value);
-    if depth > 6 {
-        return None;
+/// Builds example values for parameters, media types and schemas.
+///
+/// Document values come first: `example`, the first of `examples`, `default`,
+/// the first `enum` value. With `types` set, values missing from the document
+/// become type placeholders (see [`Sampler::placeholder`]) and `placeholders`
+/// records that one was used. `allOf` members are merged; `oneOf`/`anyOf` use
+/// the first option. Recursive `$ref`s stop at the first repetition.
+struct Sampler<'a> {
+    doc: &'a Value,
+    types: bool,
+    placeholders: bool,
+    /// `$ref`s on the current path, to stop recursive schemas.
+    refs: Vec<&'a str>,
+}
+impl<'a> Sampler<'a> {
+    fn new(doc: &'a Value, types: bool) -> Self {
+        Self {
+            doc,
+            types,
+            placeholders: false,
+            refs: Vec::new(),
+        }
     }
+
+    fn sample(&mut self, value: &'a Value, depth: usize) -> Option<Value> {
+        if depth > SAMPLE_DEPTH {
+            return None;
+        }
+        // Resolve references while remembering them for cycle detection.
+        let pushed = self.refs.len();
+        let mut value = value;
+        for _ in 0..16 {
+            let Some(reference) = value.get("$ref").and_then(Value::as_str) else {
+                break;
+            };
+            if self.refs.contains(&reference) {
+                self.refs.truncate(pushed);
+                return None;
+            }
+            let Some(target) = reference
+                .strip_prefix('#')
+                .and_then(|pointer| self.doc.pointer(pointer))
+            else {
+                break;
+            };
+            self.refs.push(reference);
+            value = target;
+        }
+        let result = self.sample_resolved(value, depth);
+        self.refs.truncate(pushed);
+        result
+    }
+
+    fn sample_resolved(&mut self, value: &'a Value, depth: usize) -> Option<Value> {
+        if let Some(found) = document_value(self.doc, value) {
+            return Some(found);
+        }
+        if let Some(schema) = value.get("schema") {
+            return self.sample(schema, depth + 1);
+        }
+        if let Some(members) = value.get("allOf").and_then(Value::as_array) {
+            return self.all_of(value, members, depth);
+        }
+        if let Some(first) = ["oneOf", "anyOf"]
+            .iter()
+            .find_map(|k| value.get(*k).and_then(|v| v.get(0)))
+        {
+            return self.sample(first, depth + 1);
+        }
+        let kind = schema_type(value);
+        if let Some(properties) = value.get("properties").and_then(Value::as_object) {
+            let required = required_names(value);
+            return self.object(properties.iter(), &required, depth);
+        }
+        if let Some(items) = value.get("items") {
+            return match self.sample(items, depth + 1) {
+                Some(item) => Some(Value::Array(vec![item])),
+                None if self.types => {
+                    self.placeholders = true;
+                    Some(Value::Array(vec![]))
+                }
+                None => None,
+            };
+        }
+        self.types.then(|| self.placeholder(value, kind)).flatten()
+    }
+
+    /// An object from `properties`. Document values are always used; with
+    /// `types`, the required properties (all of them when none is required)
+    /// get placeholders too.
+    fn object(
+        &mut self,
+        properties: impl Iterator<Item = (&'a String, &'a Value)>,
+        required: &BTreeSet<&str>,
+        depth: usize,
+    ) -> Option<Value> {
+        let mut object = serde_json::Map::new();
+        for (name, schema) in properties {
+            let wanted = required.is_empty() || required.contains(name.as_str());
+            let types = self.types;
+            self.types = types && wanted;
+            let value = self.sample(schema, depth + 1);
+            self.types = types;
+            if let Some(value) = value {
+                object.insert(name.clone(), value);
+            }
+        }
+        if object.is_empty() && !self.types {
+            return None;
+        }
+        Some(Value::Object(object))
+    }
+
+    /// Merges `allOf` members (and the schema's own properties): properties
+    /// and `required` are combined, member object examples override them.
+    fn all_of(&mut self, own: &'a Value, members: &'a [Value], depth: usize) -> Option<Value> {
+        let mut properties: Vec<(&'a String, &'a Value)> = Vec::new();
+        let mut required = required_names(own);
+        let mut examples = serde_json::Map::new();
+        let mut scalar = None;
+        let mut queue: Vec<(&'a Value, usize)> = members.iter().rev().map(|m| (m, 0)).collect();
+        if let Some(own) = own.get("properties").and_then(Value::as_object) {
+            properties.extend(own.iter());
+        }
+        let mut seen: Vec<&'a str> = Vec::new();
+        while let Some((member, level)) = queue.pop() {
+            if level > SAMPLE_DEPTH {
+                continue;
+            }
+            let reference = member.get("$ref").and_then(Value::as_str);
+            if let Some(r) = reference {
+                if seen.contains(&r) || self.refs.contains(&r) {
+                    continue;
+                }
+                seen.push(r);
+            }
+            let member = resolve(self.doc, member);
+            match document_value(self.doc, member) {
+                Some(Value::Object(map)) => examples.extend(map),
+                Some(other) => {
+                    scalar.get_or_insert(other);
+                }
+                None => {}
+            }
+            if let Some(map) = member.get("properties").and_then(Value::as_object) {
+                for (name, schema) in map {
+                    properties.retain(|(n, _)| *n != name);
+                    properties.push((name, schema));
+                }
+            }
+            required.extend(required_names(member));
+            if let Some(nested) = member.get("allOf").and_then(Value::as_array) {
+                queue.extend(nested.iter().rev().map(|m| (m, level + 1)));
+            }
+        }
+        if properties.is_empty() && examples.is_empty() {
+            // allOf without object members, e.g. a single referenced scalar schema.
+            return scalar.or_else(|| members.first().and_then(|m| self.sample(m, depth + 1)));
+        }
+        let mut object = match self.object(properties.into_iter(), &required, depth) {
+            Some(Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
+        object.extend(examples);
+        (!object.is_empty() || self.types).then_some(Value::Object(object))
+    }
+
+    /// A type placeholder: "" (or a fixed value for common string formats),
+    /// 0 (or `minimum`), false, {} or null.
+    fn placeholder(&mut self, schema: &Value, kind: Option<&str>) -> Option<Value> {
+        let value = match kind? {
+            "string" => Value::String(
+                match schema.get("format").and_then(Value::as_str) {
+                    Some("date-time") => "1970-01-01T00:00:00Z",
+                    Some("date") => "1970-01-01",
+                    Some("uuid") => "00000000-0000-0000-0000-000000000000",
+                    Some("email") => "user@example.com",
+                    _ => "",
+                }
+                .into(),
+            ),
+            "integer" | "number" => match schema.get("minimum") {
+                Some(min @ Value::Number(_)) => min.clone(),
+                _ => Value::from(0),
+            },
+            "boolean" => Value::Bool(false),
+            "object" => Value::Object(serde_json::Map::new()),
+            "array" => Value::Array(vec![]),
+            "null" => Value::Null,
+            _ => return None,
+        };
+        self.placeholders = true;
+        Some(value)
+    }
+}
+
+/// `example`, the first of `examples`, `default` or the first `enum` value.
+fn document_value(doc: &Value, value: &Value) -> Option<Value> {
     if let Some(example) = value.get("example") {
         return Some(example.clone());
     }
@@ -717,23 +910,30 @@ fn sample(doc: &Value, value: &Value, depth: u8) -> Option<Value> {
     if let Some(default) = value.get("default") {
         return Some(default.clone());
     }
-    if let Some(first) = value.get("enum").and_then(|e| e.get(0)) {
-        return Some(first.clone());
-    }
-    if let Some(schema) = value.get("schema") {
-        return sample(doc, schema, depth + 1);
-    }
-    if let Some(properties) = value.get("properties").and_then(Value::as_object) {
-        let object: serde_json::Map<_, _> = properties
+    value.get("enum").and_then(|e| e.get(0)).cloned()
+}
+
+/// The schema's `type`; for a 3.1 type list the first that is not "null".
+fn schema_type(schema: &Value) -> Option<&str> {
+    match schema.get("type") {
+        Some(Value::String(kind)) => Some(kind),
+        Some(Value::Array(kinds)) => kinds
             .iter()
-            .filter_map(|(k, v)| sample(doc, v, depth + 1).map(|v| (k.clone(), v)))
-            .collect();
-        return (!object.is_empty()).then_some(Value::Object(object));
+            .filter_map(Value::as_str)
+            .find(|k| *k != "null")
+            .or(Some("null")),
+        _ => None,
     }
-    if let Some(items) = value.get("items") {
-        return sample(doc, items, depth + 1).map(|v| Value::Array(vec![v]));
-    }
-    None
+}
+
+fn required_names(schema: &Value) -> BTreeSet<&str> {
+    schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
 }
 
 fn text(value: &Value) -> String {
@@ -801,11 +1001,232 @@ fn base_url(doc: &Value, override_url: &str) -> Result<String, String> {
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
-/// Imports the operations of an OpenAPI 3.x or Swagger 2.0 JSON document, one
-/// request per GET/POST/PUT/PATCH/DELETE operation. Path parameters become
-/// `{{variables}}`; required query and header parameters and JSON bodies are
-/// filled from examples where the document has them.
+/// One importable operation of an OpenAPI document.
+#[derive(Debug, Clone)]
+pub struct OpenApiOperation {
+    /// Stable identity, "METHOD path" (e.g. "GET /pets/{petId}").
+    pub key: String,
+    pub method: String,
+    pub path: String,
+    /// The request name: operationId, else summary, else the path.
+    pub name: String,
+    pub operation_id: String,
+    pub tags: Vec<String>,
+    /// Request with ID 0; [`OpenApiSpec::build`] assigns IDs.
+    request: Request,
+    variables: Vec<Field>,
+    missing_values: Vec<String>,
+    other_auth: Vec<String>,
+    cookie_keys: Vec<String>,
+    key_variables: Vec<String>,
+    cookies: usize,
+    no_example: bool,
+    not_json: bool,
+    typed_body: bool,
+}
+impl OpenApiOperation {
+    /// Case-insensitive match against the path, name and operationId.
+    pub fn matches(&self, filter: &str) -> bool {
+        let filter = filter.trim().to_lowercase();
+        filter.is_empty()
+            || [&self.path, &self.name, &self.operation_id]
+                .iter()
+                .any(|s| s.to_lowercase().contains(&filter))
+    }
+}
+
+/// A parsed OpenAPI document: the operations to choose from. Parse once with
+/// [`parse_openapi`], then [`OpenApiSpec::build`] the selected operations.
+#[derive(Debug, Clone, Default)]
+pub struct OpenApiSpec {
+    /// Operations in path order, then GET/POST/PUT/PATCH/DELETE order per path.
+    pub operations: Vec<OpenApiOperation>,
+    other_methods: usize,
+}
+impl OpenApiSpec {
+    /// All tags in name order.
+    pub fn tags(&self) -> Vec<String> {
+        let tags: BTreeSet<&String> = self.operations.iter().flat_map(|o| &o.tags).collect();
+        tags.into_iter().cloned().collect()
+    }
+
+    /// Requests for the operations whose keys are selected, in document order,
+    /// with IDs from `first_id`. At most [`IMPORT_LIMIT`] are built; warnings
+    /// and variables cover only the built operations.
+    pub fn build(&self, selected: &BTreeSet<String>, first_id: u64) -> Imported {
+        let mut notes = Notes::default();
+        let mut requests = Vec::new();
+        let mut variables: Vec<Field> = Vec::new();
+        let (mut missing, mut other_auth, mut cookie_keys) =
+            (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+        let (mut cookies, mut no_example, mut not_json, mut typed) = (0, 0, 0, 0);
+        let mut built = Vec::new();
+        for op in self.operations.iter().filter(|o| selected.contains(&o.key)) {
+            if requests.len() >= IMPORT_LIMIT {
+                notes.warnings.push(format!(
+                    "Stopped at {IMPORT_LIMIT} requests, the plan limit"
+                ));
+                break;
+            }
+            built.push(op);
+            let mut request = op.request.clone();
+            request.id = first_id + requests.len() as u64;
+            requests.push(request);
+            for v in &op.variables {
+                if !variables.iter().any(|f| f.name == v.name) {
+                    variables.push(v.clone());
+                }
+            }
+            missing.extend(op.missing_values.iter().cloned());
+            other_auth.extend(op.other_auth.iter().cloned());
+            cookie_keys.extend(op.cookie_keys.iter().cloned());
+            cookies += op.cookies;
+            no_example += usize::from(op.no_example);
+            not_json += usize::from(op.not_json);
+            typed += usize::from(op.typed_body);
+        }
+        let join = |set: BTreeSet<String>| set.into_iter().collect::<Vec<_>>().join(", ");
+        if !missing.is_empty() {
+            notes.warnings.push(format!(
+                "Set values for path variables without an example: {}",
+                join(missing)
+            ));
+        }
+        if requests
+            .iter()
+            .any(|r: &Request| r.auth.kind == AuthKind::Bearer)
+        {
+            notes
+                .warnings
+                .push("Bearer requests use {{access_token}}; enter it as a secret variable".into());
+        }
+        let key_vars: BTreeSet<&String> = built.iter().flat_map(|o| &o.key_variables).collect();
+        if !key_vars.is_empty() {
+            let refs: Vec<String> = key_vars.iter().map(|v| format!("{{{{{v}}}}}")).collect();
+            notes.warnings.push(format!(
+                "API key requests use {}; enter the key as a secret variable",
+                refs.join(", ")
+            ));
+        }
+        if requests.iter().any(|r| r.auth.kind == AuthKind::Basic) {
+            notes
+                .warnings
+                .push("Basic Auth requests need a username and password before running".into());
+        }
+        if !cookie_keys.is_empty() {
+            notes.warnings.push(format!(
+                "API keys sent as cookies are not supported (no cookie support): {}",
+                join(cookie_keys)
+            ));
+        }
+        if !other_auth.is_empty() {
+            notes.warnings.push(format!(
+                "Add credentials for these security schemes manually: {}",
+                join(other_auth)
+            ));
+        }
+        for (count, what) in [
+            (
+                self.other_methods,
+                "HEAD/OPTIONS/TRACE operations skipped (unsupported methods)",
+            ),
+            (cookies, "cookie parameters skipped (no cookie support)"),
+            (typed, "bodies built from schema types; review the values"),
+            (
+                no_example,
+                "JSON bodies left empty (no example or schema in the document)",
+            ),
+            (not_json, "non-JSON request bodies left empty"),
+        ] {
+            if count > 0 {
+                notes.warnings.push(format!("{count} {what}"));
+            }
+        }
+        let mut imported = notes.finish(requests);
+        imported.variables = variables;
+        imported
+    }
+}
+
+/// Imports every operation of an OpenAPI 3.x or Swagger 2.0 JSON document.
+/// See [`parse_openapi`] and [`OpenApiSpec::build`].
 pub fn from_openapi(bytes: &[u8], first_id: u64, base_override: &str) -> Result<Imported, String> {
+    let spec = parse_openapi(bytes, base_override)?;
+    let all = spec.operations.iter().map(|o| o.key.clone()).collect();
+    Ok(spec.build(&all, first_id))
+}
+
+/// A security scheme definition by name (OpenAPI 3 or Swagger 2.0).
+fn security_scheme<'a>(doc: &'a Value, name: &str) -> Option<&'a Value> {
+    let key = name.replace('~', "~0").replace('/', "~1");
+    doc.pointer(&format!("/components/securitySchemes/{key}"))
+        .or_else(|| doc.pointer(&format!("/securityDefinitions/{key}")))
+        .map(|s| resolve(doc, s))
+}
+
+enum Scheme<'a> {
+    Bearer,
+    Basic,
+    /// Header or query API key: location, parameter name.
+    ApiKey(&'a str, &'a str),
+    CookieKey,
+    Other,
+}
+fn classify(scheme: Option<&Value>) -> Scheme<'_> {
+    let Some(scheme) = scheme else {
+        return Scheme::Other;
+    };
+    let get = |k: &str| scheme.get(k).and_then(Value::as_str);
+    let http = get("scheme").unwrap_or_default();
+    match get("type") {
+        Some("http") if http.eq_ignore_ascii_case("bearer") => Scheme::Bearer,
+        Some("oauth2" | "openIdConnect") => Scheme::Bearer,
+        Some("basic") => Scheme::Basic,
+        Some("http") if http.eq_ignore_ascii_case("basic") => Scheme::Basic,
+        Some("apiKey") => match (get("in"), get("name")) {
+            (Some(at @ ("header" | "query")), Some(name)) if !name.trim().is_empty() => {
+                Scheme::ApiKey(at, name)
+            }
+            (Some("cookie"), _) => Scheme::CookieKey,
+            _ => Scheme::Other,
+        },
+        _ => Scheme::Other,
+    }
+}
+
+/// Variable names for header/query API key schemes in scheme-name order:
+/// `api_key`, `api_key_2`, …
+fn api_key_variables(doc: &Value) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    for definitions in [
+        doc.pointer("/components/securitySchemes"),
+        doc.get("securityDefinitions"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_object)
+    {
+        for (name, scheme) in definitions {
+            if names.contains_key(name) {
+                continue;
+            }
+            if let Scheme::ApiKey(..) = classify(Some(resolve(doc, scheme))) {
+                let var = match names.len() {
+                    0 => "api_key".to_owned(),
+                    n => format!("api_key_{}", n + 1),
+                };
+                names.insert(name.clone(), var);
+            }
+        }
+    }
+    names
+}
+
+/// Parses an OpenAPI 3.x or Swagger 2.0 JSON document into its
+/// GET/POST/PUT/PATCH/DELETE operations. Path parameters become
+/// `{{variables}}`; required query and header parameters use the document's
+/// examples; JSON bodies use examples and otherwise type placeholders.
+pub fn parse_openapi(bytes: &[u8], base_override: &str) -> Result<OpenApiSpec, String> {
     let doc: Value = serde_json::from_slice(bytes)
         .map_err(|e| format!("Not a JSON document (YAML is not supported): {e}"))?;
     let version = doc
@@ -821,14 +1242,74 @@ pub fn from_openapi(bytes: &[u8], first_id: u64, base_override: &str) -> Result<
         .get("paths")
         .and_then(Value::as_object)
         .ok_or("The document has no paths")?;
-    let mut notes = Notes::default();
-    let mut requests = Vec::new();
-    let mut variables: Vec<Field> = Vec::new();
-    let mut missing_values = std::collections::BTreeSet::new();
-    let (mut other_methods, mut cookies, mut no_example, mut not_json, mut other_auth) =
-        (0, 0, 0, 0, std::collections::BTreeSet::new());
-    let mut add_variable = |name: String, value: String, secret: bool| {
-        if !variables.iter().any(|v| v.name == name) {
+    let key_vars = api_key_variables(&doc);
+    let mut spec = OpenApiSpec::default();
+    for (path, item) in paths {
+        let item = resolve(&doc, item);
+        let Some(operations) = item.as_object() else {
+            continue;
+        };
+        for method in OPENAPI_METHODS {
+            if let Some(op) = operations.get(method) {
+                spec.operations.push(operation(
+                    &doc,
+                    &base,
+                    &key_vars,
+                    path,
+                    item,
+                    method,
+                    resolve(&doc, op),
+                ));
+            }
+        }
+        spec.other_methods += operations
+            .keys()
+            .filter(|m| matches!(m.as_str(), "head" | "options" | "trace"))
+            .count();
+    }
+    Ok(spec)
+}
+
+fn operation(
+    doc: &Value,
+    base: &str,
+    key_vars: &BTreeMap<String, String>,
+    path: &str,
+    item: &Value,
+    method: &str,
+    op: &Value,
+) -> OpenApiOperation {
+    let mut result = OpenApiOperation {
+        key: format!("{} {path}", method.to_ascii_uppercase()),
+        method: method.to_ascii_uppercase(),
+        path: path.to_owned(),
+        name: String::new(),
+        operation_id: op
+            .get("operationId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        tags: op
+            .get("tags")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        request: Request::default(),
+        variables: Vec::new(),
+        missing_values: Vec::new(),
+        other_auth: Vec::new(),
+        cookie_keys: Vec::new(),
+        key_variables: Vec::new(),
+        cookies: 0,
+        no_example: false,
+        not_json: false,
+        typed_body: false,
+    };
+    let add_variable = |variables: &mut Vec<Field>, name: String, value: String, secret| {
+        if !variables.iter().any(|v: &Field| v.name == name) {
             variables.push(Field {
                 name,
                 value,
@@ -836,185 +1317,157 @@ pub fn from_openapi(bytes: &[u8], first_id: u64, base_override: &str) -> Result<
             });
         }
     };
-    'paths: for (path, item) in paths {
-        let item = resolve(&doc, item);
-        let Some(operations) = item.as_object() else {
-            continue;
-        };
-        for (method, op) in operations {
-            if !OPENAPI_METHODS.contains(&method.as_str()) {
-                other_methods +=
-                    usize::from(matches!(method.as_str(), "head" | "options" | "trace"));
-                continue;
-            }
-            if requests.len() >= IMPORT_LIMIT {
-                notes.warnings.push(format!(
-                    "Stopped at {IMPORT_LIMIT} requests, the plan limit"
-                ));
-                break 'paths;
-            }
-            let op = resolve(&doc, op);
-            // Operation parameters override path-level ones with the same name and location.
-            let mut params: Vec<&Value> = Vec::new();
-            for list in [item.get("parameters"), op.get("parameters")]
-                .into_iter()
-                .flatten()
-            {
-                for p in list.as_array().into_iter().flatten() {
-                    let p = resolve(&doc, p);
-                    let key = |v: &Value| (v.get("name").cloned(), v.get("in").cloned());
-                    params.retain(|q| key(q) != key(p));
-                    params.push(p);
-                }
-            }
-            let mut url_path = path.clone();
-            let (mut query, mut headers) = (Vec::new(), Vec::new());
-            let mut body = Body::default();
-            for p in params {
-                let name = p.get("name").and_then(Value::as_str).unwrap_or_default();
-                let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
-                let example = sample(&doc, p, 0).map(|v| text(&v));
-                match p.get("in").and_then(Value::as_str).unwrap_or_default() {
-                    "path" => {
-                        let var = variable_name(name);
-                        url_path =
-                            url_path.replace(&format!("{{{name}}}"), &format!("{{{{{var}}}}}"));
-                        if example.is_none() {
-                            missing_values.insert(var.clone());
-                        }
-                        add_variable(var, example.unwrap_or_default(), sensitive(name));
-                    }
-                    "query" if required || example.is_some() => {
-                        query.push(field(name, &example.unwrap_or_default()));
-                    }
-                    "header" if required => {
-                        let lower = name.to_ascii_lowercase();
-                        if !matches!(lower.as_str(), "accept" | "content-type" | "authorization") {
-                            headers.push(field(name, &example.unwrap_or_default()));
-                        }
-                    }
-                    "cookie" => cookies += 1,
-                    // Swagger 2.0 body parameter.
-                    "body" => match sample(&doc, p, 0) {
-                        Some(v) => {
-                            body.text = serde_json::to_string_pretty(&v).unwrap_or_default();
-                            body.json = true;
-                        }
-                        None => no_example += 1,
-                    },
-                    _ => {}
-                }
-            }
-            if let Some(content) = op
-                .get("requestBody")
-                .map(|b| resolve(&doc, b))
-                .and_then(|b| b.get("content"))
-                .and_then(Value::as_object)
-            {
-                match content.iter().find(|(kind, _)| kind.contains("json")) {
-                    Some((_, media)) => match sample(&doc, media, 0) {
-                        Some(v) => {
-                            body.text = serde_json::to_string_pretty(&v).unwrap_or_default();
-                            body.json = true;
-                        }
-                        None => no_example += 1,
-                    },
-                    None => not_json += 1,
-                }
-            }
-            let mut auth = Auth::default();
-            let security = op.get("security").or_else(|| doc.get("security"));
-            for requirement in security.and_then(Value::as_array).into_iter().flatten() {
-                for scheme_name in requirement
-                    .as_object()
-                    .into_iter()
-                    .flatten()
-                    .map(|(k, _)| k)
-                {
-                    let key = scheme_name.replace('~', "~0").replace('/', "~1");
-                    let scheme = doc
-                        .pointer(&format!("/components/securitySchemes/{key}"))
-                        .or_else(|| doc.pointer(&format!("/securityDefinitions/{key}")))
-                        .map(|s| resolve(&doc, s));
-                    let kind = scheme.and_then(|s| s.get("type")).and_then(Value::as_str);
-                    let http = scheme.and_then(|s| s.get("scheme")).and_then(Value::as_str);
-                    if auth.kind == AuthKind::None
-                        && (matches!(kind, Some("http"))
-                            && http.is_some_and(|h| h.eq_ignore_ascii_case("bearer"))
-                            || matches!(kind, Some("oauth2" | "openIdConnect")))
-                    {
-                        // A reference keeps the token out of the plan; its value is secret.
-                        auth.kind = AuthKind::Bearer;
-                        auth.bearer = "{{access_token}}".into();
-                        add_variable("access_token".into(), String::new(), true);
-                    } else if auth.kind == AuthKind::None
-                        && (kind == Some("basic")
-                            || kind == Some("http")
-                                && http.is_some_and(|h| h.eq_ignore_ascii_case("basic")))
-                    {
-                        auth.kind = AuthKind::Basic;
-                    } else if auth.kind == AuthKind::None {
-                        other_auth.insert(scheme_name.clone());
-                    }
-                }
-            }
-            let name = op
-                .get("operationId")
-                .or_else(|| op.get("summary"))
-                .and_then(Value::as_str)
-                .unwrap_or(path);
-            requests.push(Request {
-                id: first_id + requests.len() as u64,
-                name: name.chars().take(60).collect(),
-                method: method.to_ascii_uppercase(),
-                url: format!("{base}{url_path}"),
-                query,
-                headers,
-                body,
-                auth,
-                ..Request::default()
-            });
+    // Operation parameters override path-level ones with the same name and location.
+    let mut params: Vec<&Value> = Vec::new();
+    for list in [item.get("parameters"), op.get("parameters")]
+        .into_iter()
+        .flatten()
+    {
+        for p in list.as_array().into_iter().flatten() {
+            let p = resolve(doc, p);
+            let key = |v: &Value| (v.get("name").cloned(), v.get("in").cloned());
+            params.retain(|q| key(q) != key(p));
+            params.push(p);
         }
     }
-    if !missing_values.is_empty() {
-        notes.warnings.push(format!(
-            "Set values for path variables without an example: {}",
-            missing_values.into_iter().collect::<Vec<_>>().join(", ")
-        ));
-    }
-    if requests.iter().any(|r| r.auth.kind == AuthKind::Bearer) {
-        notes
-            .warnings
-            .push("Bearer requests use {{access_token}}; enter it as a secret variable".into());
-    }
-    if requests.iter().any(|r| r.auth.kind == AuthKind::Basic) {
-        notes
-            .warnings
-            .push("Basic Auth requests need a username and password before running".into());
-    }
-    if !other_auth.is_empty() {
-        notes.warnings.push(format!(
-            "Add credentials for these security schemes manually: {}",
-            other_auth.into_iter().collect::<Vec<_>>().join(", ")
-        ));
-    }
-    for (count, what) in [
-        (
-            other_methods,
-            "HEAD/OPTIONS/TRACE operations skipped (unsupported methods)",
-        ),
-        (cookies, "cookie parameters skipped (no cookie support)"),
-        (
-            no_example,
-            "JSON bodies left empty (no example in the document)",
-        ),
-        (not_json, "non-JSON request bodies left empty"),
-    ] {
-        if count > 0 {
-            notes.warnings.push(format!("{count} {what}"));
+    let mut url_path = path.to_owned();
+    let (mut query, mut headers) = (Vec::new(), Vec::new());
+    let mut body = Body::default();
+    let set_body = |body: &mut Body, result: &mut OpenApiOperation, schema: &Value| {
+        let mut sampler = Sampler::new(doc, true);
+        match sampler.sample(schema, 0) {
+            Some(v) => {
+                body.text = serde_json::to_string_pretty(&v).unwrap_or_default();
+                body.json = true;
+                result.typed_body = sampler.placeholders;
+            }
+            None => result.no_example = true,
+        }
+    };
+    for p in params {
+        let name = p.get("name").and_then(Value::as_str).unwrap_or_default();
+        let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
+        let example = Sampler::new(doc, false).sample(p, 0).map(|v| text(&v));
+        match p.get("in").and_then(Value::as_str).unwrap_or_default() {
+            "path" => {
+                let var = variable_name(name);
+                url_path = url_path.replace(&format!("{{{name}}}"), &format!("{{{{{var}}}}}"));
+                if example.is_none() {
+                    result.missing_values.push(var.clone());
+                }
+                add_variable(
+                    &mut result.variables,
+                    var,
+                    example.unwrap_or_default(),
+                    sensitive(name),
+                );
+            }
+            "query" if required || example.is_some() => {
+                query.push(field(name, &example.unwrap_or_default()));
+            }
+            "header" if required => {
+                let lower = name.to_ascii_lowercase();
+                if !matches!(lower.as_str(), "accept" | "content-type" | "authorization") {
+                    headers.push(field(name, &example.unwrap_or_default()));
+                }
+            }
+            "cookie" => result.cookies += 1,
+            // Swagger 2.0 body parameter.
+            "body" => set_body(&mut body, &mut result, p),
+            _ => {}
         }
     }
-    let mut imported = notes.finish(requests);
-    imported.variables = variables;
-    Ok(imported)
+    if let Some(content) = op
+        .get("requestBody")
+        .map(|b| resolve(doc, b))
+        .and_then(|b| b.get("content"))
+        .and_then(Value::as_object)
+    {
+        match content.iter().find(|(kind, _)| kind.contains("json")) {
+            Some((_, media)) => set_body(&mut body, &mut result, media),
+            None => result.not_json = true,
+        }
+    }
+
+    // Security requirements are alternatives; each lists schemes used together.
+    // Use the first one RustLoad can fill completely, else an anonymous one,
+    // else the first one as far as possible.
+    let mut auth = Auth::default();
+    let requirements: Vec<&serde_json::Map<String, Value>> = op
+        .get("security")
+        .or_else(|| doc.get("security"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .collect();
+    let supported = |name: &String| {
+        matches!(
+            classify(security_scheme(doc, name)),
+            Scheme::Bearer | Scheme::Basic | Scheme::ApiKey(..)
+        )
+    };
+    let chosen = requirements
+        .iter()
+        .find(|r| !r.is_empty() && r.keys().all(supported))
+        .or_else(|| requirements.iter().find(|r| r.is_empty()))
+        .or(requirements.first());
+    for scheme_name in chosen.into_iter().flat_map(|r| r.keys()) {
+        match classify(security_scheme(doc, scheme_name)) {
+            Scheme::Bearer if auth.kind == AuthKind::None => {
+                // A reference keeps the token out of the plan; its value is secret.
+                auth.kind = AuthKind::Bearer;
+                auth.bearer = "{{access_token}}".into();
+                add_variable(
+                    &mut result.variables,
+                    "access_token".into(),
+                    String::new(),
+                    true,
+                );
+            }
+            Scheme::Basic if auth.kind == AuthKind::None => auth.kind = AuthKind::Basic,
+            Scheme::ApiKey(at, name) => {
+                let var = key_vars
+                    .get(scheme_name)
+                    .cloned()
+                    .unwrap_or_else(|| "api_key".into());
+                let key = Field {
+                    name: name.to_owned(),
+                    value: format!("{{{{{var}}}}}"),
+                    secret: true,
+                };
+                let list = if at == "header" {
+                    &mut headers
+                } else {
+                    &mut query
+                };
+                list.retain(|f: &Field| !f.name.eq_ignore_ascii_case(name));
+                list.push(key);
+                if !result.key_variables.contains(&var) {
+                    result.key_variables.push(var.clone());
+                }
+                add_variable(&mut result.variables, var, String::new(), true);
+            }
+            Scheme::CookieKey => result.cookie_keys.push(scheme_name.clone()),
+            _ => result.other_auth.push(scheme_name.clone()),
+        }
+    }
+    let name = op
+        .get("operationId")
+        .or_else(|| op.get("summary"))
+        .and_then(Value::as_str)
+        .unwrap_or(path);
+    result.name = name.chars().take(60).collect();
+    result.request = Request {
+        id: 0,
+        name: result.name.clone(),
+        method: result.method.clone(),
+        url: format!("{base}{url_path}"),
+        query,
+        headers,
+        body,
+        auth,
+        ..Request::default()
+    };
+    result
 }

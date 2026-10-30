@@ -845,3 +845,89 @@ fn imported_openapi_requests_reach_the_server() {
     assert_eq!(s.counts.failed, 0, "{:?} {:?}", s.errors, s.logs);
     assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
 }
+
+#[test]
+fn selected_openapi_operations_with_api_keys_reach_the_server() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let doc = r##"{
+      "openapi": "3.0.3",
+      "servers": [{"url": "https://api.invalid"}],
+      "components": {
+        "securitySchemes": {
+          "header": {"type": "apiKey", "in": "header", "name": "X-Custom"},
+          "query": {"type": "apiKey", "in": "query", "name": "key"}
+        },
+        "schemas": {"Order": {"allOf": [
+          {"type": "object", "required": ["id"], "properties": {"id": {"type": "string", "format": "uuid"}}},
+          {"type": "object", "required": ["qty"], "properties": {"qty": {"type": "integer", "minimum": 1}}}
+        ]}}
+      },
+      "security": [{"header": [], "query": []}],
+      "paths": {
+        "/echo": {
+          "get": {"operationId": "echoGet", "tags": ["echo"]},
+          "post": {"operationId": "echoPost", "tags": ["echo"], "requestBody": {"content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/Order"}}}}}
+        },
+        "/missing": {"get": {"operationId": "notThere", "tags": ["other"]}}
+      }
+    }"##;
+    let base = format!("http://{}", server.address);
+    let spec = rustload::import::parse_openapi(doc.as_bytes(), &base).unwrap();
+    assert_eq!(spec.operations.len(), 3);
+    let selected = spec
+        .operations
+        .iter()
+        .filter(|o| o.tags.iter().any(|t| t == "echo"))
+        .map(|o| o.key.clone())
+        .collect();
+    let mut imported = spec.build(&selected, 1);
+    assert_eq!(imported.requests.len(), 2, "/missing is not selected");
+    let expect = |pointer: &str, value: &str| Assertions {
+        json_pointer: pointer.into(),
+        json_expected: value.into(),
+        ..Assertions::default()
+    };
+    // Header and query keys reach the server; the placeholder body is valid JSON.
+    imported.requests[0].assertions = expect("/request/target", "\"/echo?key=query-key\"");
+    imported.requests[1].assertions = expect("/request/custom", "\"header-key\"");
+    let body: serde_json::Value = serde_json::from_str(&imported.requests[1].body.text).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({"id": "00000000-0000-0000-0000-000000000000", "qty": 1})
+    );
+    let mut plan = TestPlan {
+        requests: imported.requests,
+        variables: imported.variables,
+        ..TestPlan::default()
+    };
+    for v in &mut plan.variables {
+        v.value = if v.name == "api_key" {
+            "header-key"
+        } else {
+            "query-key"
+        }
+        .into();
+    }
+    plan.load.users = 1;
+    plan.load.duration_secs = 1;
+    plan.load.rps_limit = 30;
+    // The saved form keeps the references, not the keys.
+    let saved = serde_json::to_string(&plan).unwrap();
+    assert!(saved.contains("{{api_key}}") && saved.contains("{{api_key_2}}"));
+    let restored: TestPlan = serde_json::from_str(&saved).unwrap();
+    assert!(
+        restored
+            .variables
+            .iter()
+            .all(|v| v.secret && v.value.is_empty())
+    );
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    assert_eq!(s.counts.failed, 0, "{:?} {:?}", s.errors, s.logs);
+    assert_eq!(s.endpoints.len(), 2);
+    assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
+}

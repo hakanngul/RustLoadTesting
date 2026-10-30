@@ -1,7 +1,12 @@
 //! Import dialog: browser "Copy as cURL" text, a HAR file or an OpenAPI
 //! document into the plan.
 use super::*;
-use crate::import::{HAR_SIZE_LIMIT, IMPORT_LIMIT, Imported, from_curl, from_har, from_openapi};
+use crate::import::{
+    HAR_SIZE_LIMIT, IMPORT_LIMIT, Imported, OpenApiSpec, from_curl, from_har, parse_openapi,
+};
+use std::collections::BTreeSet;
+
+const METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Source {
@@ -19,6 +24,48 @@ pub(super) struct ImportDialog {
     base_url: String,
     replace: bool,
     preview: Option<Result<Imported, String>>,
+    /// OpenAPI only: the parsed document and the operation selection.
+    picker: Option<Picker>,
+}
+
+/// Chooses which OpenAPI operations to import. The document is parsed once;
+/// requests are built for the selection only when it changes.
+struct Picker {
+    spec: OpenApiSpec,
+    selected: BTreeSet<String>,
+    filter: String,
+    method: Option<&'static str>,
+    tag: Option<String>,
+    tags: Vec<String>,
+    /// Requests of the current selection, for the warnings; rebuilt on change.
+    built: Option<Imported>,
+}
+impl Picker {
+    fn new(spec: OpenApiSpec) -> Self {
+        Self {
+            selected: spec.operations.iter().map(|o| o.key.clone()).collect(),
+            tags: spec.tags(),
+            spec,
+            filter: String::new(),
+            method: None,
+            tag: None,
+            built: None,
+        }
+    }
+    /// Indices of the operations the filters show.
+    fn visible(&self) -> Vec<usize> {
+        self.spec
+            .operations
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| {
+                o.matches(&self.filter)
+                    && self.method.is_none_or(|m| o.method == m)
+                    && self.tag.as_ref().is_none_or(|t| o.tags.contains(t))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 impl Default for ImportDialog {
     fn default() -> Self {
@@ -30,6 +77,7 @@ impl Default for ImportDialog {
             base_url: String::new(),
             replace: false,
             preview: None,
+            picker: None,
         }
     }
 }
@@ -44,11 +92,17 @@ impl ImportDialog {
             return Err("File exceeds 50 MiB".into());
         }
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        if self.source == Source::Har {
-            from_har(&bytes, first_id, self.api_only)
-        } else {
-            from_openapi(&bytes, first_id, &self.base_url)
+        from_har(&bytes, first_id, self.api_only)
+    }
+
+    fn parse_openapi(&self) -> Result<OpenApiSpec, String> {
+        let path = self.path.trim();
+        let meta = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
+        if meta.len() > HAR_SIZE_LIMIT {
+            return Err("File exceeds 50 MiB".into());
         }
+        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        parse_openapi(&bytes, &self.base_url)
     }
 }
 
@@ -62,12 +116,19 @@ impl RustLoadApp {
         } else {
             self.plan.requests.iter().map(|r| r.id).max().unwrap_or(0) + 1
         };
+        // Requests the plan can still take with the chosen mode.
+        let existing = self.plan.requests.len();
+        let room = if dialog.replace {
+            IMPORT_LIMIT
+        } else {
+            IMPORT_LIMIT.saturating_sub(existing)
+        };
         let mut open = true;
         let mut apply = false;
         egui::Window::new("Import requests")
             .open(&mut open)
             .collapsible(false)
-            .default_width(620.0)
+            .default_width(680.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     for (source, label) in [
@@ -78,6 +139,7 @@ impl RustLoadApp {
                         if ui.selectable_label(dialog.source == source, label).clicked() {
                             dialog.source = source;
                             dialog.preview = None;
+                            dialog.picker = None;
                         }
                     }
                 });
@@ -103,7 +165,7 @@ impl RustLoadApp {
                     );
                     ui.label(
                         RichText::new(
-                            "One request per GET/POST/PUT/PATCH/DELETE operation. Path parameters become {{variables}}; required query/header parameters and JSON bodies use the document's examples.",
+                            "Preview lists the GET/POST/PUT/PATCH/DELETE operations; choose which to import. Path parameters become {{variables}}; required query/header parameters use the document's examples; JSON bodies use examples, else type placeholders to review. Bearer/OAuth and API keys become secret variable references.",
                         )
                         .small()
                         .color(p.muted),
@@ -129,14 +191,15 @@ impl RustLoadApp {
                     )
                 {
                     dialog.preview = None;
+                    dialog.picker = None;
                 }
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.radio_value(&mut dialog.replace, false, "Add to current requests");
                     ui.radio_value(&mut dialog.replace, true, "Replace current requests");
                 });
                 ui.label(
                     RichText::new(
-                        "Only requests are imported, never responses. Authorization, Cookie and other credential values stay in this session and are not saved. Bodies are session-only unless you enable Save body.",
+                        "Only requests are imported, never responses. Authorization, Cookie and other credential values stay in this session and are not saved; a secret that is exactly one {{variable}} reference is saved as that reference. Bodies are session-only unless you enable Save body.",
                     )
                     .small()
                     .color(p.muted),
@@ -144,13 +207,35 @@ impl RustLoadApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if ui.button("Preview").clicked() {
-                        dialog.preview = Some(dialog.parse(first_id));
+                        if dialog.source == Source::OpenApi {
+                            match dialog.parse_openapi() {
+                                Ok(spec) => {
+                                    dialog.picker = Some(Picker::new(spec));
+                                    dialog.preview = None;
+                                }
+                                Err(e) => {
+                                    dialog.picker = None;
+                                    dialog.preview = Some(Err(e));
+                                }
+                            }
+                        } else {
+                            dialog.preview = Some(dialog.parse(first_id));
+                        }
                     }
-                    let ready = matches!(&dialog.preview, Some(Ok(i)) if !i.requests.is_empty());
+                    let ready = match &dialog.picker {
+                        Some(picker) if dialog.source == Source::OpenApi => {
+                            !picker.selected.is_empty() && picker.selected.len() <= room
+                        }
+                        _ => matches!(&dialog.preview, Some(Ok(i)) if !i.requests.is_empty()),
+                    };
                     if ui.add_enabled(ready, egui::Button::new("Import")).clicked() {
                         apply = true;
                     }
                 });
+                if let Some(picker) = &mut dialog.picker {
+                    let kept = if dialog.replace { 0 } else { existing };
+                    picker_ui(ui, picker, p, kept, first_id);
+                }
                 match &dialog.preview {
                     None => {}
                     Some(Err(e)) => {
@@ -174,9 +259,16 @@ impl RustLoadApp {
                 }
             });
         if apply {
-            // Parse again so IDs follow the plan as it is now.
             let replace = dialog.replace;
-            match dialog.parse(first_id) {
+            let imported = match &dialog.picker {
+                // Build from the parsed document so IDs follow the plan as it is now.
+                Some(picker) if dialog.source == Source::OpenApi => {
+                    Ok(picker.spec.build(&picker.selected, first_id))
+                }
+                // Parse again so IDs follow the plan as it is now.
+                _ => dialog.parse(first_id),
+            };
+            match imported {
                 Ok(imported) => self.apply_import(imported, replace),
                 Err(e) => dialog.preview = Some(Err(e)),
             }
@@ -231,5 +323,176 @@ impl RustLoadApp {
         self.message = format!(
             "Imported {count} request(s). Review them and authorize the targets before running.{note}"
         );
+    }
+}
+
+/// The OpenAPI operation list: filters, Select all / None for the filtered
+/// operations, one checkbox per operation, the selection count against the
+/// plan limit and the warnings for the selection.
+fn picker_ui(ui: &mut egui::Ui, picker: &mut Picker, p: Palette, kept: usize, first_id: u64) {
+    // `kept`: requests already in the plan that stay after the import.
+    let room = IMPORT_LIMIT.saturating_sub(kept);
+    ui.separator();
+    let total = picker.spec.operations.len();
+    if total == 0 {
+        ui.colored_label(
+            p.warning,
+            "The document has no GET/POST/PUT/PATCH/DELETE operations",
+        );
+        return;
+    }
+    // Top-aligned: the text field and the combo boxes differ in height.
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut picker.filter)
+                .hint_text("Filter by path, name or operationId")
+                .desired_width(240.0),
+        );
+        egui::ComboBox::from_id_salt("openapi_method")
+            .selected_text(picker.method.unwrap_or("All methods"))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut picker.method, None, "All methods");
+                for m in METHODS {
+                    ui.selectable_value(&mut picker.method, Some(m), m);
+                }
+            });
+        if !picker.tags.is_empty() {
+            egui::ComboBox::from_id_salt("openapi_tag")
+                .selected_text(picker.tag.as_deref().unwrap_or("All tags"))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut picker.tag, None, "All tags");
+                    for t in &picker.tags {
+                        ui.selectable_value(&mut picker.tag, Some(t.clone()), t);
+                    }
+                });
+        }
+    });
+    let visible = picker.visible();
+    let Picker { spec, selected, .. } = picker;
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .button(format!("Select all ({})", visible.len()))
+            .on_hover_text("Select every operation the filters show")
+            .clicked()
+        {
+            for &i in &visible {
+                changed |= selected.insert(spec.operations[i].key.clone());
+            }
+        }
+        if ui
+            .button("None")
+            .on_hover_text("Clear the operations the filters show")
+            .clicked()
+        {
+            for &i in &visible {
+                changed |= selected.remove(&spec.operations[i].key);
+            }
+        }
+        let shown = if visible.len() < total {
+            format!(" · {} shown", visible.len())
+        } else {
+            String::new()
+        };
+        ui.strong(format!(
+            "{} of {total} operations selected{shown}",
+            selected.len()
+        ));
+    });
+    // Height left for the list and the warnings so the dialog fits the window.
+    let above = ui.cursor().top() - ui.min_rect().top();
+    let budget = (ui.ctx().content_rect().height() - above - 150.0).clamp(140.0, 400.0);
+    if visible.is_empty() {
+        ui.label(RichText::new("No operations match the filters").color(p.muted));
+    } else {
+        let row_height = ui.spacing().interact_size.y;
+        egui::ScrollArea::vertical()
+            .id_salt("openapi_operations")
+            .max_height(budget * 0.65)
+            .auto_shrink([false, true])
+            .show_rows(ui, row_height, visible.len(), |ui, range| {
+                for &i in &visible[range] {
+                    let op = &spec.operations[i];
+                    let mut on = selected.contains(&op.key);
+                    ui.horizontal(|ui| {
+                        let mut toggled = ui.checkbox(&mut on, "").changed();
+                        ui.add_sized(
+                            [58.0, row_height],
+                            egui::Label::new(
+                                RichText::new(&op.method)
+                                    .monospace()
+                                    .size(12.0)
+                                    .color(p.accent),
+                            ),
+                        );
+                        let mut job = egui::text::LayoutJob::default();
+                        let font = |size| egui::FontId::monospace(size);
+                        let format = |color, size| egui::TextFormat {
+                            font_id: font(size),
+                            color,
+                            ..Default::default()
+                        };
+                        job.append(&op.path, 0.0, format(p.text, 12.0));
+                        if op.name != op.path {
+                            job.append(&op.name, 12.0, format(p.muted, 12.0));
+                        }
+                        if !op.tags.is_empty() {
+                            job.append(&op.tags.join(", "), 12.0, format(p.info, 11.0));
+                        }
+                        if ui
+                            .add(egui::Label::new(job).truncate().sense(egui::Sense::click()))
+                            .clicked()
+                        {
+                            on = !on;
+                            toggled = true;
+                        }
+                        if toggled {
+                            changed = true;
+                            if on {
+                                selected.insert(op.key.clone());
+                            } else {
+                                selected.remove(&op.key);
+                            }
+                        }
+                    });
+                }
+            });
+    }
+    if selected.len() > room {
+        let held = if kept == 0 {
+            String::new()
+        } else {
+            format!(" ({kept} already in the plan)")
+        };
+        ui.colored_label(
+            p.error,
+            format!(
+                "{} operations selected, but a plan holds at most {IMPORT_LIMIT} requests{held}. Select at most {room}{}.",
+                selected.len(),
+                if kept == 0 { "" } else { " or replace current requests" }
+            ),
+        );
+    }
+    if changed {
+        picker.built = None;
+    }
+    if picker.built.is_none() && !picker.selected.is_empty() {
+        picker.built = Some(picker.spec.build(&picker.selected, first_id));
+    }
+    if let Some(built) = picker
+        .built
+        .as_ref()
+        // Over the limit, the error above says what to do instead.
+        .filter(|_| !picker.selected.is_empty() && picker.selected.len() <= room)
+        && !built.warnings.is_empty()
+    {
+        egui::ScrollArea::vertical()
+            .id_salt("openapi_warnings")
+            .max_height(budget * 0.35)
+            .show(ui, |ui| {
+                for w in &built.warnings {
+                    ui.colored_label(p.warning, format!("• {w}"));
+                }
+            });
     }
 }

@@ -36,9 +36,11 @@ impl Serialize for Field {
             secret: bool,
         }
         let secret = self.secret || sensitive(&self.name);
+        // A secret keeps its value only when it is one whole `{{name}}` reference.
+        let keep = !secret || is_variable_reference(&self.value);
         Saved {
             name: &self.name,
-            value: if secret { "" } else { &self.value },
+            value: if keep { &self.value } else { "" },
             secret,
         }
         .serialize(serializer)
@@ -345,11 +347,21 @@ fn serialize_secret_reference<S: Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     // Preserve a whole variable reference, never literal credentials or mixed text.
-    let reference = value
+    serializer.serialize_str(if is_variable_reference(value) {
+        value
+    } else {
+        ""
+    })
+}
+
+/// True when `value` is exactly one `{{name}}` variable reference (name of
+/// ASCII letters, digits and `_`). Such values are kept when a secret is
+/// saved; literal secrets and mixed text never are.
+pub fn is_variable_reference(value: &str) -> bool {
+    value
         .strip_prefix("{{")
         .and_then(|s| s.strip_suffix("}}"))
-        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
-    serializer.serialize_str(if reference.is_some() { value } else { "" })
+        .is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
