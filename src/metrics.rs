@@ -212,6 +212,9 @@ pub struct Snapshot {
     /// Iterations per second of an arrival-rate (open model) run; `None` for
     /// closed-model runs.
     pub arrival_rate: Option<f64>,
+    /// Planned arrival rate as (seconds, iterations/s) points of an
+    /// arrival-rate run (at most `STAGE_LIMIT + 1`); empty for closed-model runs.
+    pub target_rate: Vec<(f64, f64)>,
     /// Whole-run response latency distribution (measured window only).
     pub latency_distribution: Vec<LatencyBucket>,
     /// Measured failures grouped by request and reason, most frequent first.
@@ -221,6 +224,20 @@ pub struct Snapshot {
     pub errors_overflow: u64,
 }
 impl Snapshot {
+    /// Arrival-rate summary of an open-model run, e.g. `Arrival rate 50/s` or
+    /// `Arrival rate 0 to 100/s (stages)`; `None` for closed-model runs.
+    pub fn arrival_summary(&self) -> Option<String> {
+        let rate = self.arrival_rate?;
+        let (low, high) = self
+            .target_rate
+            .iter()
+            .fold((rate, rate), |(lo, hi), &(_, r)| (lo.min(r), hi.max(r)));
+        Some(if self.target_rate.len() > 2 || low != high {
+            format!("Arrival rate {low} to {high}/s (stages)")
+        } else {
+            format!("Arrival rate {rate}/s")
+        })
+    }
     /// Length of the measured window: elapsed time after warmup.
     pub fn measured_elapsed(&self) -> f64 {
         (self.elapsed - self.measured_from).max(0.0)

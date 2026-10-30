@@ -106,9 +106,9 @@ pub fn export(
                     snapshot.warmup_counts.started
                 )
             };
-            let arrival = snapshot.arrival_rate.map_or_else(String::new, |rate| {
+            let arrival = snapshot.arrival_summary().map_or_else(String::new, |rate| {
                 format!(
-                    " · Arrival rate {rate}/s: {} iterations dropped (all VUs busy)",
+                    " · {rate}: {} iterations dropped (all VUs busy)",
                     snapshot.counts.dropped_iterations
                 )
             });

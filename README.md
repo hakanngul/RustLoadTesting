@@ -288,6 +288,16 @@ iteration is not started and is counted as a **dropped iteration**; dropped
 iterations are not requests, so they do not enter the error rate. The global RPS
 cap and think time do not apply in this mode.
 
+Tick **Ramp the rate** to change the rate over time with up to 20 rate stages
+(for example 0 to 100 it/s over 60 s, hold 100 it/s for 240 s, 100 to 0 over
+60 s). The rate field becomes the **Start rate**; each stage moves linearly from
+the previous rate to its target, and the total duration is the sum of the
+stages. Iteration `k` starts when the integrated rate reaches `k`, so a
+zero-rate stage pauses new starts. The table and draggable preview are the same
+as for user stages. Throughput charts draw the planned rate as a dashed
+**Target it/s** line; one iteration may send several requests, so requests/s can
+be a multiple of it. Without rate stages the rate is constant, as in older plans.
+
 | Measurement | Meaning |
 | --- | --- |
 | Successful request | HTTP 200 to 299 by default, or the configured expected status, with all assertions and extractions passing |
