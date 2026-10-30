@@ -302,7 +302,8 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
                 .as_ref()
                 .map(|(_, _, us)| *us)
                 .unwrap_or_else(|_| started.elapsed().as_micros().clamp(1, 3_600_000_000) as u64);
-            let mut m = c.metrics.lock().expect("metrics lock");
+            // Evaluate before taking the shared metrics lock; bodies can be up to the
+            // configured limit and are parsed at most once.
             let mut assertion_failed = false;
             let mut status_failed = false;
             let mut extracted = Variables::new();
@@ -311,21 +312,25 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
                     .assertions
                     .status
                     .map_or(!(200..300).contains(status), |expected| expected != *status);
+                let json = if request.assertions.json_pointer.is_empty()
+                    && request.extractors.is_empty()
+                {
+                    None
+                } else {
+                    serde_json::from_slice::<serde_json::Value>(body).ok()
+                };
                 let mut content_assertions = request.assertions.clone();
                 content_assertions.status = Some(*status);
-                assertion_failed = !core::evaluate(
+                assertion_failed = !core::evaluate_parsed(
                     &content_assertions,
                     *status,
                     elapsed_us.div_ceil(1000),
-                    body,
+                    json.as_ref(),
                 );
                 for e in &request.extractors {
-                    let value = serde_json::from_slice::<serde_json::Value>(body)
-                        .ok()
-                        .and_then(|json| json.pointer(&e.pointer).cloned());
-                    match value {
+                    match json.as_ref().and_then(|json| json.pointer(&e.pointer)) {
                         Some(serde_json::Value::String(s)) => {
-                            extracted.insert(e.variable.clone(), s);
+                            extracted.insert(e.variable.clone(), s.clone());
                         }
                         Some(value) => {
                             extracted.insert(e.variable.clone(), value.to_string());
@@ -335,6 +340,9 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
                         }
                     }
                 }
+            }
+            let mut m = c.metrics.lock().expect("metrics lock");
+            if let Ok((status, _, _)) = &result {
                 let _ = m.total.record(elapsed_us);
                 let _ = m.bucket.record(elapsed_us);
                 *m.statuses.entry(*status).or_default() += 1;
@@ -400,14 +408,24 @@ async fn user_loop(c: Context, mut vars: Variables, delay: Duration) {
     c.metrics.lock().expect("metrics lock").users -= 1;
 }
 
+/// Schedule lag the gate may catch up on. Covers timer wake-up rounding without
+/// letting idle periods bank a burst of starts.
+const MAX_GATE_LAG: Duration = Duration::from_millis(10);
+
 async fn permit(c: &Context) -> bool {
     let mut gate =
         tokio::select! { _ = c.stop.cancelled() => return false, guard = c.gate.lock() => guard };
-    tokio::select! { _ = c.stop.cancelled() => return false, _ = tokio::time::sleep_until(*gate) => {} }
+    let now = Instant::now();
+    let slot = (*gate).max(now.checked_sub(MAX_GATE_LAG).unwrap_or(now));
+    if slot > now {
+        tokio::select! { _ = c.stop.cancelled() => return false, _ = tokio::time::sleep_until(slot) => {} }
+    }
     if c.stop.is_cancelled() || Instant::now() >= c.deadline {
         return false;
     }
-    *gate = Instant::now() + Duration::from_secs_f64(1.0 / c.plan.load.rps_limit as f64);
+    // Advance from the scheduled slot, not the wake-up time: timers round sleeps up
+    // to whole milliseconds, which previously cut the achieved rate well below the limit.
+    *gate = slot + Duration::from_secs_f64(1.0 / c.plan.load.rps_limit as f64);
     true
 }
 
