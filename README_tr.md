@@ -33,11 +33,12 @@ uygulamayla gelen HTTP test sunucusu kullanılarak Linux üzerinde alındı.*
 | --- | --- |
 | HTTP senaryosu oluşturma | Ardışık GET, POST, PUT, PATCH ve DELETE istekleri; header, sorgu parametresi, ham veya JSON gövde, Basic ve Bearer kimlik doğrulaması |
 | İstekler arasında veri aktarma | Değişkenler, kullanıcıya atanmış CSV satırları ve erişim token'ı gibi değerler için JSON Pointer ile veri çıkarma |
-| Yanıtları doğrulama | Beklenen durum kodu, yanıt süresi sınırı ve JSON Pointer eşitlik kontrolleri |
-| Yükü yapılandırma | Eşzamanlı kullanıcı sayısı, sabit veya doğrusal artış profili, toplam süre, senaryo tekrarları arasındaki bekleme, zaman aşımı ve ortak istek başlatma sınırı |
+| Yanıtları doğrulama | Beklenen durum kodu, yanıt süresi sınırı, JSON Pointer eşitlik kontrolleri ve Passed/Failed kararı veren SLO eşikleri |
+| Yükü yapılandırma | Sabit, kademeli artışlı veya çok aşamalı kullanıcı profilleri, açık model varış hızı (isteğe bağlı aşamalı), warmup, senaryo tekrarları arasındaki bekleme, zaman aşımı ve ortak istek başlatma sınırı |
+| Senaryo içe aktarma | Tarayıcıdan kopyalanan cURL komutları, HAR dosyaları ve OpenAPI 3.x / Swagger 2.0 dokümanları (JSON veya YAML) |
 | Testi izleme | İstek hızı, gecikme yüzdelikleri, aktif kullanıcılar, HTTP durum kodları, uç nokta özetleri ve filtrelenebilir loglar |
 | Çalışma alanını düzenleme | İki Studio düzeni; Studio, Studio 2 ve Monitor'da özelleştirilebilir widgetlar ve adlandırılabilir sayfalar, sürükleyerek sıralama, ayarlanabilir genişlikler, koyu ve açık tema |
-| Sonuçları saklama | Yerel SQLite geçmişi ve HTML, JSON veya CSV olarak dışa aktarma |
+| Sonuçları saklama | Yerel SQLite geçmişi, bir baseline'a göre çalıştırma karşılaştırması ve HTML, JSON veya CSV olarak dışa aktarma |
 
 RustLoad şu anda MVP aşamasında. Linux üzerinde çalışması kontrol edildi.
 Hedef platform olan macOS'ta yerel kabul testleri henüz yapılmadı. Bir sürüm
@@ -254,8 +255,9 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   JSON gövdeler JSON gövde olarak alınır.
 - Bağlantı header'ları, `Content-Length` ve `Accept-Encoding` kaldırılır:
   yanıtlar sıkıştırılmadan okunur, böylece boyutlar ve extraction doğru kalır.
-- `-k`, `-L`, `-F`, `-T`, `@dosya` verileri ve HEAD/OPTIONS istekleri alınmaz;
-  önizleme neyin neden atlandığını listeler.
+- `-k` ve `-L` uyarıyla yok sayılır (TLS her zaman doğrulanır, yönlendirmeler
+  izlenmez); `-F`, `-T`, `@dosya` verileri ve HEAD/OPTIONS istekleri alınmaz.
+  Önizleme neyin neden yok sayıldığını veya atlandığını listeler.
 - HAR içe aktarma yalnızca XHR/fetch isteklerini tutabilir. Sadece istekler
   okunur, HAR'daki yanıtlar hiçbir zaman içe aktarılmaz. En fazla 50 MiB dosya
   ve 500 istek.
@@ -497,9 +499,8 @@ yayıncı sertifikası yapılandırılmadı. Platformların yerel arayüz kabul 
 ayrı bir kontroldür; ayrıntılar [release rehberinde](docs/releases.md).
 
 1.000 kullanıcıyla kapasite ve çizim katmanının uzun süreli bellek kullanımı
-henüz ölçülmedi. Flow, Pause, şablonlar, tarayıcı emülasyonu, histogram
-görselleştirmesi, çerez oturumları, dağıtık worker'lar ve performans testi
-karşılaştırmaları mevcut uygulamanın kapsamı dışında.
+henüz ölçülmedi. Flow, Pause, şablonlar, tarayıcı emülasyonu, çerez oturumları ve dağıtık
+worker'lar mevcut uygulamanın kapsamı dışında.
 
 ## Belgeler
 
