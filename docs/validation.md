@@ -1,5 +1,32 @@
 # Validation evidence
 
+## Multi-stage load profile update
+
+Load profiles gain **Stages** (up to 20). Constant, RampUp and Stages share one
+schedule in the engine; each virtual user computes when it is active. Shared
+profile selector and stage editor (table plus draggable preview) in Studio and
+Studio 2; comparison warnings describe stage profiles.
+
+- `every_profile_is_one_schedule`: constant users start at 0 s; ramp-up users
+  start at ramp × i / users exactly as before; a stage profile up, down and up
+  again reactivates a user on the next rise (5 s, idle after 15 s, back at
+  25 s); a user above the peak never starts.
+- `stage_profiles_validate`: empty, zero-length, over 10,000 users, zero peak and
+  21 stages rejected; warmup limits use the stage total; older plans load.
+- `stage_profile_ramps_users_up_and_down`: real traffic over 1 s→4, 1 s→4,
+  1 s→1. Active users reach 4 and fall to at most 2 near the end; zero failures;
+  the run lasts the stage total.
+- All earlier engine tests, including ramp-up and 100 users, still pass.
+- Native Linux/Xvfb: selecting Stages seeded 6 s→10, 18 s→10, 6 s→0 and locked
+  users/duration. Dragging the first point gave 9 s→13 (first attempt ran away
+  to 1,728 users because the axes rescaled during the drag; bounds now freeze
+  while dragging, and the pick uses the press origin). The run of 9 s→13,
+  18 s→10, 6 s→0 completed with zero errors and cancellations; the Active
+  Virtual Users chart rose to 13 by 9 s, eased to 10 by 27 s and fell to 0 at 33 s.
+
+Suite: **55 passed** (6 compare, 17 core/report, 9 dashboard-layout, 17 engine,
+6 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## Warmup update
 
 Load Configuration (Studio and Studio 2, one shared control) gains Warmup: None,

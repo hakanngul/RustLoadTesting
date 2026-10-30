@@ -284,6 +284,11 @@ tamamlar, ardından bir sonraki tekrar için ayarlanan süreyi bekler. Toplam te
 süresine kullanıcıların kademeli artış süresi de dahildir. Kullanıcılardan
 bağımsız, açık döngülü bir istek varış hızı üretilmez.
 
+**Stages** profili kullanıcı sayısını en fazla 20 aşamayla şekillendirir; her
+aşama bir önceki sayıdan (başlangıçta 0) hedefe doğrusal geçer. Aşamaları
+tablodan düzenleyebilir veya önizleme grafiğindeki noktaları sürükleyebilirsiniz.
+Sayı düştüğünde kullanıcılar mevcut tekrarlarını bitirip durur.
+
 | Ölçüm | Anlamı |
 | --- | --- |
 | Başarılı istek | Varsayılan olarak HTTP 200 ile 299 arası veya ayrıca belirlenen beklenen durum kodu; tüm doğrulama ve veri çıkarma işlemlerinin de başarılı olması gerekir |

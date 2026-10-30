@@ -43,6 +43,13 @@
   the first non-warmup start for request warmup; SLO and comparison throughput
   divide by that window. An unfinished request warmup leaves no measured data
   (Inconclusive). Charts show warmup completions separately and mark its end.
+- Load profiles are one schedule: Constant, RampUp and Stages all become
+  piecewise-linear (time, users) points. User `i` runs while the scheduled count
+  exceeds `i`, computing its activation time analytically (no polling); RampUp
+  keeps its previous start times. Users join or leave only between iterations, so
+  ramp-down lets the current iteration finish. Stages derive the peak users and
+  total duration; at most 20 stages. The editor offers a table and draggable
+  points; axis bounds freeze during a drag.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.

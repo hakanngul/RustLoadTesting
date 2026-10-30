@@ -568,3 +568,50 @@ fn unfinished_warmup_leaves_no_measured_data() {
     let slo = s.slo.unwrap();
     assert_eq!(slo.verdict, Verdict::Inconclusive);
 }
+
+#[test]
+fn stage_profile_ramps_users_up_and_down() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = TestPlan::default();
+    plan.requests[0].url = format!("http://{}/health", server.address);
+    plan.load.profile = Profile::Stages;
+    plan.load.stages = vec![
+        Stage {
+            duration_secs: 1,
+            target_users: 4,
+        },
+        Stage {
+            duration_secs: 1,
+            target_users: 4,
+        },
+        Stage {
+            duration_secs: 1,
+            target_users: 1,
+        },
+    ];
+    plan.load.rps_limit = 200;
+    plan.load.think_ms = 0;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    assert_eq!(s.target_users, 4);
+    assert_eq!(s.counts.failed, 0);
+    assert!(
+        s.elapsed < 3.9,
+        "runs for the stage total, elapsed {}",
+        s.elapsed
+    );
+    let users: Vec<_> = s.series.iter().map(|p| (p.elapsed, p.users)).collect();
+    let at = |t: f64| {
+        users
+            .iter()
+            .find(|(e, _)| *e >= t)
+            .map(|(_, u)| *u)
+            .unwrap()
+    };
+    assert_eq!(at(1.5), 4, "{users:?}");
+    assert!(at(2.9) <= 2, "ramped down: {users:?}");
+    assert!(users.iter().all(|(_, u)| *u <= 4));
+}

@@ -1,6 +1,6 @@
 //! Side-by-side comparison of two finished runs (baseline and candidate).
 use crate::{
-    core::{Profile, TestPlan},
+    core::TestPlan,
     metrics::{Counts, Latency, RunState, Snapshot},
 };
 
@@ -248,17 +248,17 @@ fn warnings(
             out.push(format!("{what} differs: {left} vs {right}"));
         }
     };
-    differs("Virtual users", b.users.to_string(), c.users.to_string());
+    differs(
+        "Virtual users",
+        b.max_users().to_string(),
+        c.max_users().to_string(),
+    );
     differs(
         "Duration",
-        format!("{}s", b.duration_secs),
-        format!("{}s", c.duration_secs),
+        format!("{}s", b.total_secs()),
+        format!("{}s", c.total_secs()),
     );
-    let profile = |l: &crate::core::LoadConfig| match l.profile {
-        Profile::Constant => "constant".to_owned(),
-        Profile::RampUp => format!("ramp-up {}s", l.ramp_secs),
-    };
-    differs("Load profile", profile(b), profile(c));
+    differs("Load profile", b.profile_label(), c.profile_label());
     differs("RPS cap", b.rps_limit.to_string(), c.rps_limit.to_string());
     differs(
         "Think time",

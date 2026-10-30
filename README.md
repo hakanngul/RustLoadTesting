@@ -261,7 +261,10 @@ Response bodies are never logged.
 
 RustLoad uses a closed-loop model: each virtual user runs the scenario in order,
 then waits for the configured think time before the next iteration. Total test
-duration includes ramp-up. It does not generate an independent open arrival rate.
+duration includes ramp-up. The **Stages** profile shapes the user count over up
+to 20 stages, each moving linearly from the previous count (0 at the start) to
+its target; edit them in the table or drag the points of the preview chart.
+When the count drops, users finish their current iteration before stopping. It does not generate an independent open arrival rate.
 
 | Measurement | Meaning |
 | --- | --- |

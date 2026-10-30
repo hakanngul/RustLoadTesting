@@ -117,6 +117,11 @@ alternatif menü/ok kontrollerini koru. Sahte KPI, uydurma trend yüzdesi veya
 Bu kuralları sessizce değiştirme. Bilinçli bir ürün değişikliği istenirse kod,
 test ve belgeleri aynı kapsamda güncelle.
 
+- Yük profili: Constant, RampUp veya Stages (en fazla 20 aşama; her aşama bir
+  önceki kullanıcı sayısından hedefe doğrusal geçer, başlangıç 0). Üçü de tek bir
+  takvime çevrilir; kullanıcı `i`, takvimdeki sayı `i`'den büyükken çalışır.
+  Azalışta kullanıcı mevcut iterasyonu bitirip boşta bekler. Stages'te kullanıcı
+  sayısı ve süre aşamalardan türetilir.
 - Closed-loop VU; toplam süre ramp-up'ı içerir. Think time senaryo iterasyonu
   sonundadır. Başarısız adım o iterasyonun kalanını atlar.
 - Varsayılan başarı HTTP 200–299; açık expected status bunu değiştirir.
