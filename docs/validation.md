@@ -1,5 +1,36 @@
 # Validation evidence
 
+## Validation feedback and Studio 2 layout fixes
+
+Reported from a real session: **Validate plan** seemed to do nothing (the
+result was only a grey status-bar line). Fixes, all checked natively on
+Linux/Xvfb in Dark and Light at 1520×1040 and 900×720 with a 3-request plan
+(warmup, assertions, SLO thresholds) and a real Local Demo run:
+
+- **Validate plan** shows a green "Plan is valid" or red "Plan has a problem"
+  card under the button until the plan changes. Validation errors name the
+  request (`Request "Pi": Invalid URL`, `Request #2: …` when unnamed) or
+  `Plan variables: …`.
+- Status bar messages have a tone: validation errors and failed runs red, the
+  missing authorization tick and cancelled runs amber, success green. When a
+  run ends, "Run started…" is replaced by its state, completed/failed counts
+  and SLO verdict.
+- Studio 2 request editor: Name, Method/URL and tabs stay in place and only
+  the tab content scrolls. Before, scrolling the Assertions tab hid the URL.
+  When the editor is under 230 px tall, everything scrolls together as before.
+- Studio 2 load panel: the authorization checkbox and origins stay visible
+  under the scrolling load settings. Before, it was cut off at 1520×1040.
+- SLO threshold rows (Studio and Studio 2): combo boxes, value, unit and remove
+  button are on one centre line in fixed columns (pixel-checked). The remove
+  buttons are full-size, also in the variables/headers table.
+- Progress meters (Virtual Users card, HTTP status distribution) no longer draw
+  a dot at 0% or put the percentage on top of the fill.
+- The assertion tree uses `≤` like the SLO items.
+
+New test `validation_errors_name_the_request_or_plan_variables`. Suite:
+**102 passed** (3 lib, 6 compare, 27 core/report, 16 dashboard, 26 engine,
+24 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## Last-plan restore fix
 
 Before: the app started with an empty plan but kept the last plan's path, so

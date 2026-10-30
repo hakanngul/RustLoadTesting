@@ -105,6 +105,30 @@ fn validation_rejects_unsafe_or_incoherent_plans() {
 }
 
 #[test]
+fn validation_errors_name_the_request_or_plan_variables() {
+    let base = std::path::Path::new(".");
+    let mut p = TestPlan::default();
+    let mut second = p.requests[0].clone();
+    second.id = 2;
+    second.name = "Pi".into();
+    second.url = "test.k6.io/pi.php".into();
+    p.requests.push(second);
+    assert_eq!(p.validate(base).unwrap_err(), "Request \"Pi\": Invalid URL");
+    p.requests[1].name = "  ".into();
+    assert_eq!(p.validate(base).unwrap_err(), "Request #2: Invalid URL");
+    p.requests[1].url = "https://test.k6.io/pi.php".into();
+    p.variables.push(Field {
+        name: "api_key".into(),
+        value: String::new(),
+        secret: true,
+    });
+    assert_eq!(
+        p.validate(base).unwrap_err(),
+        "Plan variables: Re-enter secret value: api_key"
+    );
+}
+
+#[test]
 fn assertions_use_explicit_status_and_json_pointer() {
     assert!(!evaluate(&Assertions::default(), 500, 1, b"{}"));
     let a = Assertions {

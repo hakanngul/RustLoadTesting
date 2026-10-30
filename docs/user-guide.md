@@ -275,7 +275,10 @@ reference".
 - **+ New** starts an empty plan. If there are unsaved changes, the
   **Unsaved plan** dialog offers **Keep editing** or **Discard changes**.
 - **Validate plan** (bottom of **⚙ Users & plan settings**) checks the plan and
-  the CSV file without sending traffic.
+  the CSV file without sending traffic. The result appears under the button as
+  a green **Plan is valid** or a red **Plan has a problem** card (the message
+  names the request, for example `Request "Pi": Invalid URL`) and stays until
+  you change the plan.
 
 File dialogs are plain path fields, not system file pickers. Relative paths are
 resolved from the folder the app was started in.
@@ -376,7 +379,10 @@ omission). If you need the offered load to stay fixed, use Arrival Rate.
 ### Starting and stopping
 
 1. Fix any problem the status bar reports. **▶ Run Test** validates the plan
-   first and shows "Validation: …" if something is wrong.
+   first and shows "Validation: …" if something is wrong. Status bar messages
+   that need attention are coloured: red for errors, amber for warnings (such
+   as a missing authorization tick), green for success. When a run ends the
+   status bar shows its state, completed and failed counts and SLO verdict.
 2. Tick the authorization checkbox and click **▶ Run Test**. From Studio you go
    to Monitor; from Studio 2 you stay in Studio 2.
 3. While the run is active, plan and load editing is locked ("The running

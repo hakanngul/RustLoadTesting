@@ -82,6 +82,13 @@ impl Preferences {
         }
     }
 }
+/// Colour of a status-bar message that needs attention.
+#[derive(Clone, Copy)]
+enum Tone {
+    Success,
+    Warning,
+    Error,
+}
 #[derive(PartialEq, Clone, Copy)]
 enum FileAction {
     Open,
@@ -107,6 +114,10 @@ pub struct RustLoadApp {
     dirty: bool,
     acknowledged: bool,
     message: String,
+    /// Tone of `message` while it is still the message shown.
+    message_tone: Option<(Tone, String)>,
+    /// Last "Validate plan" result and the plan it was computed for.
+    validation: Option<(String, Result<(), String>)>,
     file_action: Option<FileAction>,
     dialog_path: String,
     export_format: String,
@@ -164,6 +175,8 @@ impl RustLoadApp {
             acknowledged: false,
             message: "Create a plan or try Local Demo. All metrics come from real HTTP requests."
                 .into(),
+            message_tone: None,
+            validation: None,
             file_action: None,
             dialog_path: String::new(),
             export_format: "HTML".into(),
@@ -274,7 +287,10 @@ impl RustLoadApp {
     }
     fn start_run(&mut self) {
         if !self.acknowledged {
-            self.message = "Confirm you are authorized to test every configured target.".into();
+            self.notify(
+                Tone::Warning,
+                "Confirm you are authorized to test every configured target.",
+            );
             return;
         }
         match engine::start(
@@ -295,8 +311,35 @@ impl RustLoadApp {
                 }
                 self.message = "Run started. Charts and logs reflect real HTTP traffic.".into();
             }
-            Err(e) => self.message = format!("Validation: {e}"),
+            Err(e) => self.notify(Tone::Error, format!("Validation: {e}")),
         }
+    }
+    /// Replaces "Run started" with how the run ended and its SLO verdict.
+    fn announce_end(&mut self) {
+        let s = &self.live;
+        let mut text = format!(
+            "Run {:?} · {} completed · {} failed",
+            s.state, s.counts.completed, s.counts.failed
+        );
+        let mut tone = match s.state {
+            RunState::Completed => Tone::Success,
+            RunState::Cancelled => Tone::Warning,
+            _ => Tone::Error,
+        };
+        if let Some(outcome) = &s.slo {
+            text.push_str(&format!(" · SLO {}", outcome.summary()));
+            tone = match (tone, outcome.verdict) {
+                (Tone::Error, _) | (_, Verdict::Failed) => Tone::Error,
+                (Tone::Warning, _) | (_, Verdict::Inconclusive) => Tone::Warning,
+                _ => Tone::Success,
+            };
+        }
+        self.notify(tone, text);
+    }
+    /// Shows `text` in the status bar in the colour of `tone`.
+    fn notify(&mut self, tone: Tone, text: impl Into<String>) {
+        self.message = text.into();
+        self.message_tone = Some((tone, self.message.clone()));
     }
     fn local_demo(&mut self) {
         if self.fixture.is_none() {
@@ -872,8 +915,20 @@ impl RustLoadApp {
         ui.heading("SLO thresholds");
         threshold_editor(ui, &mut self.plan.thresholds, &self.plan.requests, p);
         ui.add_space(16.0);
+        let fingerprint = format!("{:?}", self.plan);
         if ui.button("Validate plan").clicked() {
-            self.message=match self.plan.validate(&self.base()){Ok(())=>"Plan structure and CSV are valid. Runtime variables/extractions are checked during execution.".into(),Err(e)=>format!("Validation: {e}")};
+            let result = self.plan.validate(&self.base());
+            match &result {
+                Ok(()) => self.notify(Tone::Success, "Plan is valid."),
+                Err(e) => self.notify(Tone::Error, format!("Validation: {e}")),
+            }
+            self.validation = Some((fingerprint.clone(), result));
+        }
+        // The result stays next to the button until the plan changes.
+        if let Some((checked, result)) = &self.validation
+            && *checked == fingerprint
+        {
+            validation_result(ui, result, p);
         }
     }
     fn monitor(&mut self, ctx: &egui::Context, p: Palette) {
@@ -1128,6 +1183,7 @@ impl eframe::App for RustLoadApp {
             }
             if self.live.state.terminal() && !previous.terminal() {
                 self.refresh_history();
+                self.announce_end();
             }
         }
         if ctx.input(|i| i.viewport().close_requested()) && !self.permit_close {
@@ -1171,7 +1227,16 @@ impl eframe::App for RustLoadApp {
         self.toolbar(ctx, p);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(&self.message).size(12.0).color(p.muted));
+                let tone = self
+                    .message_tone
+                    .as_ref()
+                    .filter(|(_, text)| *text == self.message)
+                    .map(|(tone, _)| *tone);
+                let text = RichText::new(&self.message).size(12.0);
+                ui.label(match tone {
+                    None => text.color(p.muted),
+                    Some(tone) => text.strong().color(tone_color(tone, p)),
+                });
             });
             ui.horizontal(|ui| {
                 ui.label(
@@ -1251,11 +1316,8 @@ fn status_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
             let fraction = *count as f32 / total.max(1) as f32;
             ui.horizontal(|ui| {
                 ui.label(status.to_string());
-                ui.add(
-                    egui::ProgressBar::new(fraction)
-                        .desired_width(110.0)
-                        .fill(if *status < 400 { p.success } else { p.error }),
-                );
+                let fill = if *status < 400 { p.success } else { p.error };
+                theme::meter(ui, p, fraction, fill, 110.0);
                 ui.label(format!("{} · {:.1}%", count, fraction * 100.0));
             });
         }
@@ -1473,6 +1535,14 @@ fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
     });
 }
 /// Compact millisecond label for axis ticks and bar names.
+/// `text` cut to `max` characters with an ellipsis.
+fn short(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_owned()
+    } else {
+        format!("{}…", text.chars().take(max - 1).collect::<String>())
+    }
+}
 fn short_ms(ms: f64) -> String {
     if ms >= 10_000.0 {
         format!("{:.0}s", ms / 1000.0)
@@ -1707,63 +1777,87 @@ fn threshold_editor(
     p: Palette,
 ) {
     let mut remove = None;
+    // Rows with fixed column widths instead of a Grid so the controls line up.
+    const METRIC_W: f32 = 130.0;
+    const SCOPE_W: f32 = 160.0;
     if !thresholds.is_empty() {
-        egui::Grid::new("slo_thresholds")
-            .num_columns(4)
-            .striped(true)
-            .show(ui, |ui| {
-                ui.strong("Metric");
-                ui.strong("Scope");
-                ui.strong("Target");
-                ui.end_row();
-                for (i, t) in thresholds.iter_mut().enumerate() {
-                    egui::ComboBox::from_id_salt(("slo_metric", i))
-                        .selected_text(t.metric.label())
-                        .show_ui(ui, |ui| {
-                            for metric in SloMetric::ALL {
-                                ui.selectable_value(&mut t.metric, metric, metric.label());
-                            }
-                        });
-                    let scope = t
-                        .request_id
-                        .and_then(|id| requests.iter().find(|r| r.id == id))
-                        .map_or_else(
-                            || {
-                                t.request_id
-                                    .map_or("All requests".into(), |id| format!("Request #{id}"))
-                            },
-                            |r| r.name.clone(),
-                        );
-                    egui::ComboBox::from_id_salt(("slo_scope", i))
-                        .selected_text(scope)
-                        .truncate()
-                        .width(150.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut t.request_id, None, "All requests");
-                            for r in requests {
-                                ui.selectable_value(&mut t.request_id, Some(r.id), &r.name);
-                            }
-                        });
-                    ui.horizontal(|ui| {
-                        ui.label(if t.metric.higher_is_better() {
-                            "≥"
-                        } else {
-                            "≤"
-                        });
-                        let range = if t.metric == SloMetric::ErrorRate {
-                            0.0..=100.0
-                        } else {
-                            0.001..=1_000_000.0
-                        };
-                        ui.add(egui::DragValue::new(&mut t.value).range(range).speed(1.0));
-                        ui.label(t.metric.unit());
+        ui.horizontal(|ui| {
+            for (text, width) in [("Metric", METRIC_W), ("Scope", SCOPE_W)] {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, 18.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(width);
+                        ui.strong(text);
+                    },
+                );
+            }
+            ui.strong("Target");
+        });
+    }
+    for (i, t) in thresholds.iter_mut().enumerate() {
+        let row = egui::vec2(ui.available_width(), 32.0);
+        ui.allocate_ui_with_layout(
+            row,
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                // Combo boxes grow downwards past `interact_size`; one shared height
+                // keeps them level with the value and remove button.
+                ui.spacing_mut().interact_size.y = 30.0;
+                egui::ComboBox::from_id_salt(("slo_metric", i))
+                    .selected_text(t.metric.label())
+                    .width(METRIC_W - 8.0)
+                    .show_ui(ui, |ui| {
+                        for metric in SloMetric::ALL {
+                            ui.selectable_value(&mut t.metric, metric, metric.label());
+                        }
                     });
-                    if ui.small_button("×").clicked() {
-                        remove = Some(i);
-                    }
-                    ui.end_row();
+                let scope = t
+                    .request_id
+                    .and_then(|id| requests.iter().find(|r| r.id == id))
+                    .map_or_else(
+                        || {
+                            t.request_id
+                                .map_or("All requests".into(), |id| format!("Request #{id}"))
+                        },
+                        |r| r.name.clone(),
+                    );
+                egui::ComboBox::from_id_salt(("slo_scope", i))
+                    .selected_text(short(&scope, 18))
+                    .width(SCOPE_W - 8.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut t.request_id, None, "All requests");
+                        for r in requests {
+                            ui.selectable_value(&mut t.request_id, Some(r.id), &r.name);
+                        }
+                    });
+                ui.label(if t.metric.higher_is_better() {
+                    "≥"
+                } else {
+                    "≤"
+                });
+                let range = if t.metric == SloMetric::ErrorRate {
+                    0.0..=100.0
+                } else {
+                    0.001..=1_000_000.0
+                };
+                ui.add_sized(
+                    [72.0, 30.0],
+                    egui::DragValue::new(&mut t.value).range(range).speed(1.0),
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(40.0, 18.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(40.0);
+                        ui.label(t.metric.unit());
+                    },
+                );
+                if ui.button("×").on_hover_text("Remove threshold").clicked() {
+                    remove = Some(i);
                 }
-            });
+            },
+        );
     }
     if let Some(i) = remove {
         thresholds.remove(i);
@@ -1781,6 +1875,34 @@ fn threshold_editor(
         p.muted,
         "Thresholds give each run a Passed/Failed verdict and never stop it. Latency and error rate are upper bounds; throughput is a lower bound measured as completed requests over the whole run.",
     );
+}
+fn tone_color(tone: Tone, p: Palette) -> Color32 {
+    match tone {
+        Tone::Success => p.success,
+        Tone::Warning => p.warning,
+        Tone::Error => p.error,
+    }
+}
+/// Outcome card of "Validate plan", tinted green or red.
+fn validation_result(ui: &mut egui::Ui, result: &Result<(), String>, p: Palette) {
+    let (color, title, detail) = match result {
+        Ok(()) => (
+            p.success,
+            "Plan is valid".to_string(),
+            "Structure, URLs, load settings, thresholds and CSV passed. Variables and extractions are checked while the test runs.".to_string(),
+        ),
+        Err(e) => (p.error, "Plan has a problem".to_string(), e.clone()),
+    };
+    egui::Frame::new()
+        .fill(color.gamma_multiply(0.12))
+        .stroke(egui::Stroke::new(1.0_f32, color))
+        .corner_radius(6)
+        .inner_margin(8)
+        .show(ui, |ui| {
+            ui.set_max_width(640.0);
+            ui.label(RichText::new(title).strong().color(color));
+            ui.label(RichText::new(detail).size(12.0).color(p.text));
+        });
 }
 /// Label of the user-count field: the VU pool cap in the open model.
 fn users_label(c: &LoadConfig) -> &'static str {
@@ -2266,7 +2388,7 @@ fn field_editor(ui: &mut egui::Ui, fields: &mut Vec<Field>, id: &str) {
                     !sensitive(&field.name),
                     egui::Checkbox::without_text(&mut field.secret),
                 );
-                if ui.small_button("×").clicked() {
+                if ui.button("×").on_hover_text("Remove row").clicked() {
                     remove = Some(i);
                 }
                 ui.end_row();
