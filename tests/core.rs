@@ -507,3 +507,46 @@ fn stage_profiles_validate() {
     let old: TestPlan = serde_json::from_value(json).unwrap();
     assert!(old.load.stages.is_empty());
 }
+
+#[test]
+fn arrival_rate_profile_validates_and_labels() {
+    let check = |rate: f64| {
+        TestPlan {
+            load: LoadConfig {
+                profile: Profile::ArrivalRate,
+                arrival_rate: rate,
+                ..LoadConfig::default()
+            },
+            ..TestPlan::default()
+        }
+        .validate(std::path::Path::new("."))
+    };
+    assert!(check(0.5).is_ok());
+    assert!(check(100_000.0).is_ok());
+    for bad in [0.0, -1.0, 0.001, 100_001.0, f64::NAN, f64::INFINITY] {
+        assert!(check(bad).is_err(), "{bad} must be rejected");
+    }
+    let open = LoadConfig {
+        profile: Profile::ArrivalRate,
+        arrival_rate: 2.5,
+        users: 40,
+        rps_limit: 1_000,
+        ..LoadConfig::default()
+    };
+    assert_eq!(open.profile_label(), "arrival rate 2.5/s, max 40 VUs");
+    assert_eq!(open.max_users(), 40);
+    // The RPS cap does not apply to the open model; the arrival rate does.
+    assert!(!open.is_elevated());
+    assert!(
+        LoadConfig {
+            arrival_rate: 150.0,
+            ..open.clone()
+        }
+        .is_elevated()
+    );
+    // Plans saved before the open model keep loading with the default rate.
+    let mut json = serde_json::to_value(TestPlan::default()).unwrap();
+    json["load"].as_object_mut().unwrap().remove("arrival_rate");
+    let old: TestPlan = serde_json::from_value(json).unwrap();
+    assert_eq!(old.load.arrival_rate, LoadConfig::default().arrival_rate);
+}

@@ -42,6 +42,9 @@ pub struct Counts {
     pub preparation_errors: u64,
     /// Body bytes of fully read responses.
     pub bytes: u64,
+    /// Arrival-rate iterations not started because every VU was busy. Not
+    /// requests, so outside `started` and the error rate.
+    pub dropped_iterations: u64,
 }
 impl Counts {
     pub fn error_rate(&self) -> f64 {
@@ -143,6 +146,9 @@ pub struct Snapshot {
     pub measured_from: f64,
     /// Warmup is configured and still in progress.
     pub warming_up: bool,
+    /// Iterations per second of an arrival-rate (open model) run; `None` for
+    /// closed-model runs.
+    pub arrival_rate: Option<f64>,
 }
 impl Snapshot {
     /// Length of the measured window: elapsed time after warmup.

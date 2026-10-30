@@ -241,6 +241,12 @@ fn warnings(
                 s.state
             ));
         }
+        if s.counts.dropped_iterations > 0 {
+            out.push(format!(
+                "{role} run dropped {} arrival-rate iterations (all VUs busy); its offered load was lower than configured",
+                s.counts.dropped_iterations
+            ));
+        }
     }
     let (b, c) = (&base_plan.load, &candidate_plan.load);
     let mut differs = |what: &str, left: String, right: String| {

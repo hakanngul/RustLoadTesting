@@ -122,7 +122,13 @@ test ve belgeleri aynı kapsamda güncelle.
   takvime çevrilir; kullanıcı `i`, takvimdeki sayı `i`'den büyükken çalışır.
   Azalışta kullanıcı mevcut iterasyonu bitirip boşta bekler. Stages'te kullanıcı
   sayısı ve süre aşamalardan türetilir.
-- Closed-loop VU; toplam süre ramp-up'ı içerir. Think time senaryo iterasyonu
+- Arrival Rate (açık model): senaryo iterasyonları `k / rate` anlarında başlar
+  (t=0'dan, süre sonundan önce), yanıt süresinden bağımsızdır. Kullanıcı sayısı
+  en fazla VU havuzudur; boş VU yoksa iterasyon düşürülür ve
+  `dropped_iterations` sayacına yazılır (istek değildir; `started` ve hata
+  oranına girmez; warmup'ta ayrı sayılır). Bu modda RPS kapısı ve think time
+  uygulanmaz.
+- Closed-loop VU (diğer profiller); toplam süre ramp-up'ı içerir. Think time senaryo iterasyonu
   sonundadır. Başarısız adım o iterasyonun kalanını atlar.
 - Varsayılan başarı HTTP 200–299; açık expected status bunu değiştirir.
   Assertion ve extraction da başarılı olmalıdır. HTTP hata sayaçları ayrıca tutulur.
@@ -139,7 +145,8 @@ test ve belgeleri aynı kapsamda güncelle.
 - KPI RPS son 5 saniyedeki tamamlanmalardan; KPI yüzdelikleri tüm-run
   histogramından gelir. Grafik yüzdelikleri bağımsız interval histogramlarıdır;
   yüzdeliklerin ortalamasını alma.
-- Global RPS kapısı başlangıçları aralıklarla dağıtır; burst kredisi biriktirmez.
+- Global RPS kapısı (kapalı model) başlangıçları aralıklarla dağıtır; burst
+  kredisi biriktirmez.
 - Stop yeni istekleri engeller; devam edenlere en fazla 5 saniye tanır, sonra
   iptal eder. Kullanıcı Stop: Cancelled; doğal süre sonu: Completed; motorun iç
   hatası: Failed. Son sayaçları kullanıcı task'ları join edildikten sonra kesinleştir.

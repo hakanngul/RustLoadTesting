@@ -178,17 +178,26 @@ async fn coordinate(
             deadline: began + Duration::from_secs(plan.load.total_secs()),
             starts: Arc::new(AtomicU64::new(0)),
         };
-        for user in 0..plan.load.max_users() {
-            let c = context.clone();
-            let mut vars: Variables = plan
-                .variables
-                .iter()
-                .map(|f| (f.name.clone(), f.value.clone()))
-                .collect();
-            if !rows.is_empty() {
-                vars.extend(rows[user as usize % rows.len()].clone());
+        let pool: Vec<Variables> = (0..plan.load.max_users())
+            .map(|user| {
+                let mut vars: Variables = plan
+                    .variables
+                    .iter()
+                    .map(|f| (f.name.clone(), f.value.clone()))
+                    .collect();
+                if !rows.is_empty() {
+                    vars.extend(rows[user as usize % rows.len()].clone());
+                }
+                vars
+            })
+            .collect();
+        if plan.load.profile == core::Profile::ArrivalRate {
+            tasks.spawn(arrivals(context, pool));
+        } else {
+            for (user, vars) in pool.into_iter().enumerate() {
+                let c = context.clone();
+                tasks.spawn(async move { user_loop(c, vars, user as u32).await });
             }
-            tasks.spawn(async move { user_loop(c, vars, user).await });
         }
     } else {
         issue = Some("HTTP client initialization failed".to_owned());
@@ -201,6 +210,8 @@ async fn coordinate(
     let mut sequence = 0;
     let mut last_bucket = began;
     let mut persistence_failed = false;
+    let arrival_rate =
+        (plan.load.profile == core::Profile::ArrivalRate).then_some(plan.load.arrival_rate);
     loop {
         tokio::select! {
             _ = interval.tick() => {},
@@ -239,6 +250,7 @@ async fn coordinate(
             (m.snapshot(elapsed), m.warmup_ended_at)
         };
         mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
+        snapshot.arrival_rate = arrival_rate;
         snapshot.run_id.clone_from(&id);
         snapshot.name.clone_from(&plan.name);
         snapshot.target_users = plan.load.max_users();
@@ -267,6 +279,7 @@ async fn coordinate(
                 m.warmup_ended_at
             };
             mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
+            snapshot.arrival_rate = arrival_rate;
             snapshot.run_id.clone_from(&id);
             snapshot.name.clone_from(&plan.name);
             snapshot.target_users = plan.load.max_users();
@@ -304,7 +317,7 @@ async fn coordinate(
 /// iteration finish.
 async fn user_loop(c: Context, mut vars: Variables, index: u32) {
     let mut active = false;
-    'scenario: loop {
+    loop {
         let now = c.began.elapsed().as_secs_f64();
         if c.plan.load.target_at(now) <= index as f64 {
             if active {
@@ -325,150 +338,8 @@ async fn user_loop(c: Context, mut vars: Variables, index: u32) {
             c.metrics.lock().expect("metrics lock").users += 1;
             active = true;
         }
-        for request in &c.plan.requests {
-            if !permit(&c).await {
-                break 'scenario;
-            }
-            // Classified by start: a warmup request stays warmup even if it ends later.
-            let warm = match c.plan.load.warmup {
-                Warmup::None => false,
-                Warmup::Duration { secs } => c.began.elapsed() < Duration::from_secs(secs),
-                Warmup::Requests { count } => c.starts.fetch_add(1, Ordering::Relaxed) < count,
-            };
-            {
-                let mut m = c.metrics.lock().expect("metrics lock");
-                if warm {
-                    m.warmup.started += 1;
-                } else {
-                    if c.plan.load.warmup != Warmup::None && m.warmup_ended_at.is_none() {
-                        m.warmup_ended_at = Some(c.began.elapsed().as_secs_f64());
-                    }
-                    m.counts.started += 1;
-                    m.endpoints
-                        .get_mut(&request.id)
-                        .expect("endpoint")
-                        .summary
-                        .counts
-                        .started += 1;
-                }
-            }
-            let started = Instant::now();
-            let result = tokio::select! {
-                biased;
-                _ = c.force.cancelled() => Err(Failure::Cancelled),
-                result = execute(&c, request, &vars) => result,
-            };
-            let elapsed_us = result
-                .as_ref()
-                .map(|(_, _, us)| *us)
-                .unwrap_or_else(|_| started.elapsed().as_micros().clamp(1, 3_600_000_000) as u64);
-            // Evaluate before taking the shared metrics lock; bodies can be up to the
-            // configured limit and are parsed at most once.
-            let mut assertion_failed = false;
-            let mut status_failed = false;
-            let mut extracted = Variables::new();
-            if let Ok((status, body, _)) = &result {
-                status_failed = request
-                    .assertions
-                    .status
-                    .map_or(!(200..300).contains(status), |expected| expected != *status);
-                let json = if request.assertions.json_pointer.is_empty()
-                    && request.extractors.is_empty()
-                {
-                    None
-                } else {
-                    serde_json::from_slice::<serde_json::Value>(body).ok()
-                };
-                let mut content_assertions = request.assertions.clone();
-                content_assertions.status = Some(*status);
-                assertion_failed = !core::evaluate_parsed(
-                    &content_assertions,
-                    *status,
-                    elapsed_us.div_ceil(1000),
-                    json.as_ref(),
-                );
-                for e in &request.extractors {
-                    match json.as_ref().and_then(|json| json.pointer(&e.pointer)) {
-                        Some(serde_json::Value::String(s)) => {
-                            extracted.insert(e.variable.clone(), s.clone());
-                        }
-                        Some(value) => {
-                            extracted.insert(e.variable.clone(), value.to_string());
-                        }
-                        None => {
-                            assertion_failed = true;
-                        }
-                    }
-                }
-            }
-            let mut m = c.metrics.lock().expect("metrics lock");
-            let success = result.is_ok() && !assertion_failed && !status_failed;
-            if warm {
-                apply_count(
-                    &mut m.warmup,
-                    &result,
-                    success,
-                    assertion_failed,
-                    status_failed,
-                );
-            } else if let Ok((status, _, _)) = &result {
-                let _ = m.total.record(elapsed_us);
-                let _ = m.bucket.record(elapsed_us);
-                *m.statuses.entry(*status).or_default() += 1;
-                let _ = m
-                    .endpoints
-                    .get_mut(&request.id)
-                    .expect("endpoint")
-                    .histogram
-                    .record(elapsed_us);
-            }
-            if !warm {
-                record_counts(
-                    &mut m,
-                    request.id,
-                    &result,
-                    success,
-                    assertion_failed,
-                    status_failed,
-                );
-            }
-            let logged = if warm {
-                m.warmup.completed
-            } else {
-                m.counts.completed
-            };
-            if !success || logged.is_multiple_of(100) {
-                let label = match &result {
-                    Ok((status, _, _)) => format!(
-                        "{}Request #{} · HTTP {} · {} · {:.1} ms",
-                        if warm { "Warmup · " } else { "" },
-                        request.id,
-                        status,
-                        if success {
-                            "passed"
-                        } else {
-                            "expectation/extraction failed"
-                        },
-                        elapsed_us as f64 / 1000.0
-                    ),
-                    Err(e) => format!(
-                        "{}Request #{} · {}",
-                        if warm { "Warmup · " } else { "" },
-                        request.id,
-                        e.label()
-                    ),
-                };
-                m.log(
-                    c.began.elapsed().as_secs_f64(),
-                    if success { "INFO" } else { "ERROR" },
-                    label,
-                );
-            }
-            drop(m);
-            if !success {
-                break;
-            } // Failed step prevents dependent requests using stale tokens.
-            vars.extend(extracted);
+        if !run_iteration(&c, &mut vars).await {
+            break;
         }
         tokio::select! { _ = c.stop.cancelled() => break, _ = tokio::time::sleep(Duration::from_millis(c.plan.load.think_ms.max(1))) => {} }
         if Instant::now() >= c.deadline {
@@ -477,6 +348,209 @@ async fn user_loop(c: Context, mut vars: Variables, index: u32) {
     }
     if active {
         c.metrics.lock().expect("metrics lock").users -= 1;
+    }
+}
+
+/// One pass through the scenario. A failed step skips the rest of the
+/// iteration; returns `false` once no further request may start (stop or deadline).
+async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
+    for request in &c.plan.requests {
+        if !permit(c).await {
+            return false;
+        }
+        // Classified by start: a warmup request stays warmup even if it ends later.
+        let warm = match c.plan.load.warmup {
+            Warmup::None => false,
+            Warmup::Duration { secs } => c.began.elapsed() < Duration::from_secs(secs),
+            Warmup::Requests { count } => c.starts.fetch_add(1, Ordering::Relaxed) < count,
+        };
+        {
+            let mut m = c.metrics.lock().expect("metrics lock");
+            if warm {
+                m.warmup.started += 1;
+            } else {
+                if c.plan.load.warmup != Warmup::None && m.warmup_ended_at.is_none() {
+                    m.warmup_ended_at = Some(c.began.elapsed().as_secs_f64());
+                }
+                m.counts.started += 1;
+                m.endpoints
+                    .get_mut(&request.id)
+                    .expect("endpoint")
+                    .summary
+                    .counts
+                    .started += 1;
+            }
+        }
+        let started = Instant::now();
+        let result = tokio::select! {
+            biased;
+            _ = c.force.cancelled() => Err(Failure::Cancelled),
+            result = execute(c, request, vars) => result,
+        };
+        let elapsed_us = result
+            .as_ref()
+            .map(|(_, _, us)| *us)
+            .unwrap_or_else(|_| started.elapsed().as_micros().clamp(1, 3_600_000_000) as u64);
+        // Evaluate before taking the shared metrics lock; bodies can be up to the
+        // configured limit and are parsed at most once.
+        let mut assertion_failed = false;
+        let mut status_failed = false;
+        let mut extracted = Variables::new();
+        if let Ok((status, body, _)) = &result {
+            status_failed = request
+                .assertions
+                .status
+                .map_or(!(200..300).contains(status), |expected| expected != *status);
+            let json =
+                if request.assertions.json_pointer.is_empty() && request.extractors.is_empty() {
+                    None
+                } else {
+                    serde_json::from_slice::<serde_json::Value>(body).ok()
+                };
+            let mut content_assertions = request.assertions.clone();
+            content_assertions.status = Some(*status);
+            assertion_failed = !core::evaluate_parsed(
+                &content_assertions,
+                *status,
+                elapsed_us.div_ceil(1000),
+                json.as_ref(),
+            );
+            for e in &request.extractors {
+                match json.as_ref().and_then(|json| json.pointer(&e.pointer)) {
+                    Some(serde_json::Value::String(s)) => {
+                        extracted.insert(e.variable.clone(), s.clone());
+                    }
+                    Some(value) => {
+                        extracted.insert(e.variable.clone(), value.to_string());
+                    }
+                    None => {
+                        assertion_failed = true;
+                    }
+                }
+            }
+        }
+        let mut m = c.metrics.lock().expect("metrics lock");
+        let success = result.is_ok() && !assertion_failed && !status_failed;
+        if warm {
+            apply_count(
+                &mut m.warmup,
+                &result,
+                success,
+                assertion_failed,
+                status_failed,
+            );
+        } else if let Ok((status, _, _)) = &result {
+            let _ = m.total.record(elapsed_us);
+            let _ = m.bucket.record(elapsed_us);
+            *m.statuses.entry(*status).or_default() += 1;
+            let _ = m
+                .endpoints
+                .get_mut(&request.id)
+                .expect("endpoint")
+                .histogram
+                .record(elapsed_us);
+        }
+        if !warm {
+            record_counts(
+                &mut m,
+                request.id,
+                &result,
+                success,
+                assertion_failed,
+                status_failed,
+            );
+        }
+        let logged = if warm {
+            m.warmup.completed
+        } else {
+            m.counts.completed
+        };
+        if !success || logged.is_multiple_of(100) {
+            let label = match &result {
+                Ok((status, _, _)) => format!(
+                    "{}Request #{} · HTTP {} · {} · {:.1} ms",
+                    if warm { "Warmup · " } else { "" },
+                    request.id,
+                    status,
+                    if success {
+                        "passed"
+                    } else {
+                        "expectation/extraction failed"
+                    },
+                    elapsed_us as f64 / 1000.0
+                ),
+                Err(e) => format!(
+                    "{}Request #{} · {}",
+                    if warm { "Warmup · " } else { "" },
+                    request.id,
+                    e.label()
+                ),
+            };
+            m.log(
+                c.began.elapsed().as_secs_f64(),
+                if success { "INFO" } else { "ERROR" },
+                label,
+            );
+        }
+        drop(m);
+        if !success {
+            break;
+        } // Failed step prevents dependent requests using stale tokens.
+        vars.extend(extracted);
+    }
+    true
+}
+
+/// Open model: starts an iteration every `1 / arrival_rate` seconds on an idle
+/// VU from the pool. With every VU busy the iteration is dropped and counted,
+/// so a slow target cannot lower the offered load silently.
+async fn arrivals(c: Context, pool: Vec<Variables>) {
+    let idle = Arc::new(Mutex::new(pool));
+    let interval = 1.0 / c.plan.load.arrival_rate;
+    let mut running = JoinSet::new();
+    for k in 0u64.. {
+        let at = c.began + Duration::from_secs_f64(k as f64 * interval);
+        if at >= c.deadline {
+            break;
+        }
+        tokio::select! { _ = c.stop.cancelled() => break, _ = tokio::time::sleep_until(at) => {} }
+        while let Some(done) = running.try_join_next() {
+            propagate_panic(done);
+        }
+        let vu = idle.lock().expect("pool lock").pop();
+        let Some(mut vars) = vu else {
+            let warm = match c.plan.load.warmup {
+                Warmup::None => false,
+                Warmup::Duration { secs } => c.began.elapsed() < Duration::from_secs(secs),
+                Warmup::Requests { count } => c.starts.load(Ordering::Relaxed) < count,
+            };
+            let mut m = c.metrics.lock().expect("metrics lock");
+            if warm {
+                m.warmup.dropped_iterations += 1;
+            } else {
+                m.counts.dropped_iterations += 1;
+            }
+            continue;
+        };
+        let (c, idle) = (c.clone(), idle.clone());
+        running.spawn(async move {
+            c.metrics.lock().expect("metrics lock").users += 1;
+            run_iteration(&c, &mut vars).await;
+            c.metrics.lock().expect("metrics lock").users -= 1;
+            idle.lock().expect("pool lock").push(vars);
+        });
+    }
+    while let Some(done) = running.join_next().await {
+        propagate_panic(done);
+    }
+}
+
+/// Re-raises an iteration panic so the coordinator reports the run as failed.
+fn propagate_panic(done: Result<(), tokio::task::JoinError>) {
+    if let Err(e) = done
+        && e.is_panic()
+    {
+        std::panic::resume_unwind(e.into_panic());
     }
 }
 
@@ -505,6 +579,10 @@ fn record_counts(
 const MAX_GATE_LAG: Duration = Duration::from_millis(10);
 
 async fn permit(c: &Context) -> bool {
+    if c.plan.load.profile == core::Profile::ArrivalRate {
+        // The arrival schedule paces starts; the RPS cap does not apply.
+        return !c.stop.is_cancelled() && Instant::now() < c.deadline;
+    }
     let mut gate =
         tokio::select! { _ = c.stop.cancelled() => return false, guard = c.gate.lock() => guard };
     let now = Instant::now();

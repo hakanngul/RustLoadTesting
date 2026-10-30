@@ -1,5 +1,33 @@
 # Validation evidence
 
+## Arrival-rate (open model) update
+
+Load profiles gain **Arrival Rate (open)**: iterations start at a fixed rate on an
+idle VU from a pool of at most Max VUs; with every VU busy the iteration is
+dropped and counted (`dropped_iterations`, warmup separately). The RPS cap and
+think time are disabled in this mode. Shared controls in Studio and Studio 2;
+the status panel, HTML report and comparison warnings show dropped iterations.
+
+- `arrival_rate_starts_iterations_on_schedule`: 50/s for 2 s with 10 VUs, an RPS
+  cap of 1 and 5 s think time (both ignored) starts 95–100 iterations, drops
+  none, has no failures and matches the fixture's served count.
+- `arrival_rate_drops_iterations_when_every_vu_is_busy`: `/body-delay` (~100 ms)
+  at 50/s with 2 VUs drops at least 40; started + dropped equals the offered
+  95–100; active users never exceed 2; error rate stays 0.
+- `arrival_rate_profile_validates_and_labels`: rates outside 0.01–100,000,
+  NaN and infinity rejected; profile label; elevated-load warning uses the
+  arrival rate instead of the unused RPS cap; older plans load the default rate.
+- All earlier engine tests (closed model, stages, warmup, pacing, stop) pass
+  after the iteration body moved into a shared function.
+- Native Linux/Xvfb: Studio (Dark) showed Max VUs and Arrival rate with the RPS
+  cap and think time disabled. A real run of `/body-delay` at 50/s, 3 Max VUs,
+  10 s completed with 251 requests, 0 errors and 249 dropped iterations
+  (251 + 249 = 500 = 10 s × 50/s); Active Virtual Users stayed at 3. Studio 2
+  (Light) showed the same shared controls.
+
+Suite: **58 passed** (6 compare, 18 core/report, 9 dashboard-layout, 19 engine,
+6 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## Multi-stage load profile update
 
 Load profiles gain **Stages** (up to 20). Constant, RampUp and Stages share one

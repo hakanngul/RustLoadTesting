@@ -50,6 +50,15 @@
   ramp-down lets the current iteration finish. Stages derive the peak users and
   total duration; at most 20 stages. The editor offers a table and draggable
   points; axis bounds freeze during a drag.
+- Arrival Rate is the open model. A scheduler starts iteration `k` at
+  `k / rate` seconds (fixed slots from t=0, so a late wake-up catches up instead
+  of lowering the rate) on an idle VU from a pool of `users`. With no idle VU
+  the iteration is dropped and counted (`Counts.dropped_iterations`, warmup
+  separately); it is not a request, so the request identities and error rate are
+  unchanged. Each VU keeps its CSV row and extracted variables across its
+  iterations, like closed-model users. The RPS gate and think time are skipped
+  because the schedule already paces starts. A constant rate only for now;
+  rate stages are not implemented.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.

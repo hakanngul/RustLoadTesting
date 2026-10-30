@@ -615,3 +615,60 @@ fn stage_profile_ramps_users_up_and_down() {
     assert!(at(2.9) <= 2, "ramped down: {users:?}");
     assert!(users.iter().all(|(_, u)| *u <= 4));
 }
+
+fn arrival_run(path: &str, rate: f64, max_vus: u32) -> (Snapshot, u64) {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = TestPlan::default();
+    plan.requests[0].url = format!("http://{}{path}", server.address);
+    plan.load.profile = Profile::ArrivalRate;
+    plan.load.arrival_rate = rate;
+    plan.load.users = max_vus;
+    plan.load.duration_secs = 2;
+    // Neither applies to the open model: starts follow the arrival schedule.
+    plan.load.rps_limit = 1;
+    plan.load.think_ms = 5_000;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    (s, server.count.load(Ordering::Relaxed))
+}
+
+#[test]
+fn arrival_rate_starts_iterations_on_schedule() {
+    let (s, served) = arrival_run("/health", 50.0, 10);
+    assert_eq!(s.state, RunState::Completed);
+    assert_eq!(s.arrival_rate, Some(50.0));
+    assert_eq!(s.target_users, 10);
+    // 2 s at 50/s: one start every 20 ms from t=0, ignoring RPS cap and think time.
+    assert!(
+        (95..=100).contains(&s.counts.started),
+        "started {}",
+        s.counts.started
+    );
+    assert_eq!(s.counts.dropped_iterations, 0);
+    assert_eq!(s.counts.failed, 0);
+    assert_eq!(s.counts.started, s.counts.completed + s.counts.cancelled);
+    assert_eq!(s.counts.completed, served);
+    assert_eq!(s.active_users, 0);
+}
+
+#[test]
+fn arrival_rate_drops_iterations_when_every_vu_is_busy() {
+    // Each iteration takes ~100 ms, so 2 VUs serve ~20/s of the 50/s offered.
+    let (s, _) = arrival_run("/body-delay", 50.0, 2);
+    assert_eq!(s.state, RunState::Completed);
+    assert!(
+        s.counts.dropped_iterations >= 40,
+        "dropped {}",
+        s.counts.dropped_iterations
+    );
+    // Every scheduled arrival either started or was dropped.
+    let offered = s.counts.started + s.counts.dropped_iterations;
+    assert!((95..=100).contains(&offered), "offered {offered}");
+    assert_eq!(s.counts.failed, 0);
+    assert!(s.series.iter().all(|p| p.users <= 2));
+    // Dropped iterations are not requests, so they never count as errors.
+    assert_eq!(s.counts.error_rate(), 0.0);
+}

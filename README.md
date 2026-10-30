@@ -264,7 +264,15 @@ then waits for the configured think time before the next iteration. Total test
 duration includes ramp-up. The **Stages** profile shapes the user count over up
 to 20 stages, each moving linearly from the previous count (0 at the start) to
 its target; edit them in the table or drag the points of the preview chart.
-When the count drops, users finish their current iteration before stopping. It does not generate an independent open arrival rate.
+When the count drops, users finish their current iteration before stopping.
+
+The **Arrival Rate (open)** profile is the open model: scenario iterations start
+at a fixed rate (iterations/s) regardless of how fast the target responds, so a
+slowing target does not lower the offered load. Each iteration runs on an idle
+virtual user from a pool of at most **Max VUs**. When every VU is busy the
+iteration is not started and is counted as a **dropped iteration**; dropped
+iterations are not requests, so they do not enter the error rate. The global RPS
+cap and think time do not apply in this mode.
 
 | Measurement | Meaning |
 | --- | --- |
@@ -280,7 +288,8 @@ When the count drops, users finish their current iteration before stopping. It d
 | Run comparison | Throughput and data are completed requests and bytes divided by elapsed time over each whole run; latency uses whole-run histograms; data rate is informational and does not affect the verdict |
 | SLO verdict | Latency thresholds use whole-run histograms; error rate uses completed requests; throughput is completed requests divided by elapsed time over the whole run, not the five-second RPS card. A target equal to the measured value passes |
 | Data / sec card | Response body bytes per second over the same trailing window; only fully read responses count, headers are excluded |
-| Global RPS limit | Scheduled HTTP starts across all users; timer lag catch-up is bounded to 10 ms, and idle time does not bank burst credits |
+| Global RPS limit | Closed-model profiles only. Scheduled HTTP starts across all users; timer lag catch-up is bounded to 10 ms, and idle time does not bank burst credits |
+| Dropped iterations | Arrival Rate only: scheduled iterations not started because all Max VUs were busy. Shown in the status panel and HTML report; a comparison warns when a run dropped any |
 
 P50/P90/P95/P99 use HDR histograms recorded in microseconds and displayed in
 milliseconds. Empty samples display a placeholder. **Stop** prevents new requests,
@@ -295,7 +304,8 @@ verification stays enabled. Remote requests use the inherited system HTTP proxy;
 literal loopback targets use a local client.
 
 Closed-loop tests can underrepresent latency when a target is overloaded
-(coordinated omission). Achieved throughput also depends on the load generator's
+(coordinated omission); use the Arrival Rate profile when the offered load must
+stay fixed. Achieved throughput also depends on the load generator's
 CPU, scheduling, connections, and the target's behavior. CPU and RAM readings
 describe the RustLoad process, not the target server. Local Demo and the soak
 harness run their fixture in that same process, so those readings include it.
