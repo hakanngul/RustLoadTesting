@@ -648,6 +648,7 @@ impl RustLoadApp {
                 metric(ui, p, label, &value, p.accent);
                 ui.add_space(8.0);
             }
+            slo_badges(ui, &self.live, p);
         } else {
             ui.heading("Load Configuration");
             let before = format!("{:?}", self.plan.load);
@@ -772,6 +773,9 @@ impl RustLoadApp {
             "Reuse rows when there are more users than data rows",
         );
         ui.label("Header names become variables. One row per user, fixed for the whole run.");
+        ui.separator();
+        ui.heading("SLO thresholds");
+        threshold_editor(ui, &mut self.plan.thresholds, &self.plan.requests, p);
         ui.add_space(16.0);
         if ui.button("Validate plan").clicked() {
             self.message=match self.plan.validate(&self.base()){Ok(())=>"Plan structure and CSV are valid. Runtime variables/extractions are checked during execution.".into(),Err(e)=>format!("Validation: {e}")};
@@ -798,6 +802,7 @@ impl RustLoadApp {
                 }
                 if let Some(issue) = &s.issue { ui.colored_label(p.warning, issue); }
                 ui.label(RichText::new("RPS and data/sec: last 5s · Percentiles: entire run, fully read responses · Latency in ms").small().color(p.muted));
+                slo_badges(ui, s, p);
                 let cards = [
                     ("Virtual Users", format!("{} / {}", s.active_users, s.target_users), p.success),
                     ("Requests / sec", format!("{:.1}", s.rps), p.accent),
@@ -1429,6 +1434,139 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
             ui.end_row();
         });
     ui.label("Total duration includes ramp-up. Stop allows up to 5s for in-flight requests.");
+}
+fn threshold_editor(
+    ui: &mut egui::Ui,
+    thresholds: &mut Vec<Threshold>,
+    requests: &[Request],
+    p: Palette,
+) {
+    let mut remove = None;
+    if !thresholds.is_empty() {
+        egui::Grid::new("slo_thresholds")
+            .num_columns(4)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.strong("Metric");
+                ui.strong("Scope");
+                ui.strong("Target");
+                ui.end_row();
+                for (i, t) in thresholds.iter_mut().enumerate() {
+                    egui::ComboBox::from_id_salt(("slo_metric", i))
+                        .selected_text(t.metric.label())
+                        .show_ui(ui, |ui| {
+                            for metric in SloMetric::ALL {
+                                ui.selectable_value(&mut t.metric, metric, metric.label());
+                            }
+                        });
+                    let scope = t
+                        .request_id
+                        .and_then(|id| requests.iter().find(|r| r.id == id))
+                        .map_or_else(
+                            || {
+                                t.request_id
+                                    .map_or("All requests".into(), |id| format!("Request #{id}"))
+                            },
+                            |r| r.name.clone(),
+                        );
+                    egui::ComboBox::from_id_salt(("slo_scope", i))
+                        .selected_text(scope)
+                        .truncate()
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut t.request_id, None, "All requests");
+                            for r in requests {
+                                ui.selectable_value(&mut t.request_id, Some(r.id), &r.name);
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        ui.label(if t.metric.higher_is_better() {
+                            "≥"
+                        } else {
+                            "≤"
+                        });
+                        let range = if t.metric == SloMetric::ErrorRate {
+                            0.0..=100.0
+                        } else {
+                            0.001..=1_000_000.0
+                        };
+                        ui.add(egui::DragValue::new(&mut t.value).range(range).speed(1.0));
+                        ui.label(t.metric.unit());
+                    });
+                    if ui.small_button("×").clicked() {
+                        remove = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+    }
+    if let Some(i) = remove {
+        thresholds.remove(i);
+    }
+    if ui
+        .add_enabled(
+            thresholds.len() < THRESHOLD_LIMIT,
+            egui::Button::new("+ Add threshold"),
+        )
+        .clicked()
+    {
+        thresholds.push(Threshold::default());
+    }
+    ui.colored_label(
+        p.muted,
+        "Thresholds give each run a Passed/Failed verdict and never stop it. Latency and error rate are upper bounds; throughput is a lower bound measured as completed requests over the whole run.",
+    );
+}
+/// SLO verdict and per-threshold results; nothing when the plan has no thresholds.
+fn slo_badges(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
+    let Some(outcome) = &s.slo else {
+        return;
+    };
+    let color = |status: ThresholdStatus| match status {
+        ThresholdStatus::Pass => p.success,
+        ThresholdStatus::Fail => p.error,
+        ThresholdStatus::NoData => p.muted,
+    };
+    let (verdict, verdict_color) = if s.state.terminal() {
+        (
+            format!("SLO {}", outcome.summary()),
+            match outcome.verdict {
+                Verdict::Passed => p.success,
+                Verdict::Failed => p.error,
+                Verdict::Inconclusive => p.warning,
+            },
+        )
+    } else {
+        let now = match outcome.verdict {
+            Verdict::Passed => "currently passing",
+            Verdict::Failed => "currently failing",
+            Verdict::Inconclusive => "waiting for data",
+        };
+        (format!("SLO {now} · final verdict at the end"), p.muted)
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(verdict).strong().color(verdict_color));
+        for r in &outcome.results {
+            let scope = match r.threshold.request_id {
+                None => String::new(),
+                Some(id) => format!(" · {}", scope_label(s, Some(id))),
+            };
+            let status = match r.status {
+                ThresholdStatus::Pass => "pass",
+                ThresholdStatus::Fail => "fail",
+                ThresholdStatus::NoData => "no data",
+            };
+            ui.label(
+                RichText::new(format!(
+                    "{}{scope}: {} ({status})",
+                    r.threshold.describe(),
+                    r.actual_label()
+                ))
+                .small()
+                .color(color(r.status)),
+            );
+        }
+    });
 }
 fn field_editor(ui: &mut egui::Ui, fields: &mut Vec<Field>, id: &str) {
     let mut remove = None;

@@ -22,6 +22,8 @@ plan or a separate load engine. Editing in one layout is reflected in the other.
   Think time, timeout and response cap are under an Advanced disclosure.
 - Right: active/target VUs, five-second completion RPS, whole-run P95, error rate,
   average response time and real interval sparklines. No fabricated delta badges.
+  When the plan has SLO thresholds, the verdict and per-threshold results appear
+  above the cards; the tree lists thresholds and opens the shared editor.
 - Bottom: throughput, latency and filtered bounded logs together. Drag its upper
   edge to resize. All of these read current-run data, even if a historical result
   was previously selected in Monitor.

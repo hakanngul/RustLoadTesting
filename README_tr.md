@@ -134,6 +134,7 @@ Monitor, mevcut testin istek hızını, yanıt verisi hızını, P50/P95/P99
 gecikmelerini, hata oranını ve istek sayısını gösterir. Grafiklerden istek hızını, ölçüm aralıklarına ait
 gecikmeleri ve aktif kullanıcı sayısını izleyebilirsiniz. HTTP durum kodları,
 uç nokta sonuçları ve filtrelenebilir loglar hataları incelemenize yardımcı olur.
+Planda SLO eşiği varsa sonuçları çalıştırma başlığının altında görünür.
 Kaydedilmiş bir özeti açmak için soldaki geçmişten bir çalıştırma seçin.
 
 Uygulamanın tamamında koyu ve açık tema kullanılabilir. Açık temadaki
@@ -203,6 +204,22 @@ etkinleştirilir; aynı sütun adı birden fazla kez bulunamaz. Göreli CSV yoll
 kaydedilmiş planın bulunduğu dizine göre çözülür. Plan henüz kaydedilmediyse
 uygulama işleminin çalışma dizini esas alınır.
 
+### SLO eşikleri
+
+Başarılı/başarısız hedeflerini Studio'da **Users & plan settings**, Studio 2'de
+**SLO Thresholds** ağacından ekleyebilirsiniz; örneğin `P95 latency ≤ 300 ms`
+veya `Error rate ≤ 1 %`. Bir eşik tüm çalıştırmaya ya da tek bir isteğe
+uygulanır. P50/P90/P95/P99/ortalama gecikme ve hata oranı üst sınırdır;
+throughput alt sınırdır. Bir planda en fazla 50 eşik olabilir.
+
+Eşikler çalıştırmayı hiçbir zaman durdurmaz. Test sürerken Monitor ve canlı
+metrik panelleri her eşiğin o an karşılanıp karşılanmadığını gösterir. Test
+bitince çalıştırma bir karar alır: **Passed**, **Failed** (herhangi bir eşik
+aşıldıysa) veya **Inconclusive** (bir eşik için veri yoksa, örneğin hiç
+tamamlanmamış bir istek). İptal edilen veya başarısız çalıştırmalar "partial"
+olarak işaretlenir. Karar geçmişe kaydedilir ve HTML, JSON ve CSV raporlarına
+eklenir.
+
 Planlar şema sürümü 1'i kullanır. Bilinmeyen sürümler reddedilir. Açma ve
 kaydetme işlemleri dosya yolu girilen bir pencereden yapılır. Cmd/Ctrl+S
 kaydeder, Cmd/Ctrl+O açar, Cmd/Ctrl+Q güvenli kapatmayı başlatır. Kapanışta
@@ -237,6 +254,7 @@ bağımsız, açık döngülü bir istek varış hızı üretilmez.
 | Yüzdelik kartları | Tüm çalıştırmanın HDR Histogram sonuçları |
 | Yüzdelik grafikleri | Her ölçüm aralığına ait bağımsız histogramlar; aralıkların yüzdelikleri ortalanmaz |
 | RPS kartı | Son beş saniyedeki tamamlanmalardan hesaplanan saniyelik istek sayısı; pencere sınırındaki kovalar kapsanan süreye göre ağırlıklandırılır |
+| SLO kararı | Gecikme eşikleri tüm çalıştırmanın histogramını, hata oranı tamamlanan istekleri kullanır; throughput, beş saniyelik RPS kartı değil, tamamlanan isteklerin tüm süreye bölümüdür. Ölçülen değer hedefe eşitse eşik karşılanmış sayılır |
 | Data / sec kartı | Aynı pencerede saniyedeki yanıt gövdesi byte'ı; yalnızca tamamen okunan yanıtlar sayılır, header'lar dahil değildir |
 | Ortak RPS sınırı | Tüm kullanıcıların HTTP istek başlangıçlarını zamanlar; zamanlayıcı gecikmesinin en fazla 10 ms'lik kısmı telafi edilir, boşta geçen süre toplu istek başlatma hakkı biriktirmez |
 

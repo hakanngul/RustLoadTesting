@@ -1,3 +1,4 @@
+use crate::core::{SloMetric, Threshold};
 use hdrhistogram::Histogram;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -130,6 +131,138 @@ pub struct Snapshot {
     pub series: VecDeque<Point>,
     pub logs: VecDeque<LogEntry>,
     pub issue: Option<String>,
+    /// SLO evaluation of this snapshot; `None` when the plan has no thresholds.
+    pub slo: Option<SloOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ThresholdStatus {
+    Pass,
+    Fail,
+    #[default]
+    NoData,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThresholdResult {
+    pub threshold: Threshold,
+    pub actual: Option<f64>,
+    pub status: ThresholdStatus,
+}
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Verdict {
+    Passed,
+    Failed,
+    #[default]
+    Inconclusive,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SloOutcome {
+    pub verdict: Verdict,
+    /// The run did not complete normally (cancelled or failed), or is still running.
+    pub partial: bool,
+    pub results: Vec<ThresholdResult>,
+}
+
+/// Checks thresholds against whole-run figures: latency from the whole-run
+/// histogram, throughput as completed requests over elapsed time (not the
+/// trailing five-second RPS). Any failure fails the run; otherwise a threshold
+/// without data makes it inconclusive.
+pub fn evaluate_thresholds(s: &Snapshot, thresholds: &[Threshold]) -> Option<SloOutcome> {
+    if thresholds.is_empty() {
+        return None;
+    }
+    let results: Vec<_> = thresholds
+        .iter()
+        .map(|t| {
+            let scope = match t.request_id {
+                None => Some((&s.counts, &s.latency)),
+                Some(id) => s
+                    .endpoints
+                    .iter()
+                    .find(|e| e.id == id)
+                    .map(|e| (&e.counts, &e.latency)),
+            };
+            let actual = scope.and_then(|(counts, latency)| {
+                let has_latency = latency.samples > 0;
+                match t.metric {
+                    SloMetric::P50 => has_latency.then_some(latency.p50),
+                    SloMetric::P90 => has_latency.then_some(latency.p90),
+                    SloMetric::P95 => has_latency.then_some(latency.p95),
+                    SloMetric::P99 => has_latency.then_some(latency.p99),
+                    SloMetric::Mean => has_latency.then_some(latency.mean),
+                    SloMetric::ErrorRate => (counts.completed > 0).then(|| counts.error_rate()),
+                    SloMetric::Throughput => {
+                        (s.elapsed > 0.0).then(|| counts.completed as f64 / s.elapsed)
+                    }
+                }
+            });
+            let status = match actual {
+                None => ThresholdStatus::NoData,
+                Some(v) => {
+                    let met = if t.metric.higher_is_better() {
+                        v >= t.value
+                    } else {
+                        v <= t.value
+                    };
+                    if met {
+                        ThresholdStatus::Pass
+                    } else {
+                        ThresholdStatus::Fail
+                    }
+                }
+            };
+            ThresholdResult {
+                threshold: t.clone(),
+                actual,
+                status,
+            }
+        })
+        .collect();
+    let verdict = if results.iter().any(|r| r.status == ThresholdStatus::Fail) {
+        Verdict::Failed
+    } else if results.iter().any(|r| r.status == ThresholdStatus::NoData) {
+        Verdict::Inconclusive
+    } else {
+        Verdict::Passed
+    };
+    Some(SloOutcome {
+        verdict,
+        partial: s.state != RunState::Completed,
+        results,
+    })
+}
+
+impl SloOutcome {
+    /// `Passed`, `Failed`, `Inconclusive`, with `(partial run)` when not completed.
+    pub fn summary(&self) -> String {
+        format!(
+            "{:?}{}",
+            self.verdict,
+            if self.partial { " (partial run)" } else { "" }
+        )
+    }
+}
+impl ThresholdResult {
+    /// Measured value with its unit, or `no data`.
+    pub fn actual_label(&self) -> String {
+        self.actual.map_or_else(
+            || "no data".into(),
+            |v| format!("{v:.2} {}", self.threshold.metric.unit()),
+        )
+    }
+}
+/// Name of a threshold's scope: the whole run or the request it targets.
+pub fn scope_label(s: &Snapshot, request_id: Option<u64>) -> String {
+    match request_id {
+        None => "All requests".into(),
+        Some(id) => s
+            .endpoints
+            .iter()
+            .find(|e| e.id == id)
+            .map_or_else(|| format!("Request #{id}"), |e| e.name.clone()),
+    }
 }
 
 pub struct EndpointAccumulator {

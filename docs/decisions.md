@@ -16,6 +16,12 @@
 - RPS cards use trailing five seconds; percentile cards use whole-run histograms.
   Data/sec uses the same window and counts body bytes of fully read responses
   only (no headers; responses are not decompressed, so this is the wire body).
+- SLO thresholds produce a verdict and never stop a run. Latency and error rate
+  are upper bounds, throughput a lower bound; equality passes. Values come from
+  whole-run histograms and counters, throughput as completed / elapsed. Any
+  failed threshold fails the run; otherwise missing data is Inconclusive.
+  Non-Completed runs carry a partial flag. Thresholds live in the plan (and its
+  stored configuration); the verdict is persisted with the run summary.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.

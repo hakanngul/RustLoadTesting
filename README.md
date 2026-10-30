@@ -127,6 +127,7 @@ On smaller windows, panels collapse or switch to tabs. See the
 Monitor shows the current run's request rate, response data rate, P50/P95/P99
 latency, error rate, and request count. Charts track throughput, interval latency, and active users.
 HTTP status counts, endpoint results, and filterable logs help you inspect failures.
+SLO threshold results appear under the run title when the plan has any.
 Select a previous run in the sidebar to reopen its saved summary.
 
 Dark and Light themes are available throughout the app. You can also view
@@ -190,6 +191,21 @@ row throughout the run; row reuse is opt-in, and duplicate headers are rejected.
 Relative CSV paths resolve against the saved plan's directory. For an unsaved
 plan, they resolve against the process working directory.
 
+### SLO thresholds
+
+Add pass/fail objectives under **Users & plan settings** (Studio) or the **SLO
+Thresholds** tree item (Studio 2), for example `P95 latency ≤ 300 ms` or
+`Error rate ≤ 1 %`. A threshold applies to the whole run or to one request.
+P50/P90/P95/P99/mean latency and error rate are upper bounds; throughput is a
+lower bound. Up to 50 thresholds per plan.
+
+Thresholds never stop a run. While it runs, Monitor and the live metrics panels
+show whether each one is currently met. When it ends, the run gets a verdict:
+**Passed**, **Failed** (any threshold missed) or **Inconclusive** (a threshold
+had no data, such as a request that never completed). Cancelled or failed runs
+are marked as partial. The verdict is saved with the run history and included
+in HTML, JSON and CSV reports.
+
 Plans use schema version 1. Unknown versions are rejected. Open and Save use a
 file-path window; Cmd/Ctrl+S saves, Cmd/Ctrl+O opens, and Cmd/Ctrl+Q requests a safe
 close. Closing warns about unsaved edits and stops active work before exiting.
@@ -222,6 +238,7 @@ duration includes ramp-up. It does not generate an independent open arrival rate
 | Percentile cards | Whole-run HDR Histogram results |
 | Percentile charts | Independent interval histograms; percentiles are never averaged across intervals |
 | RPS card | Completions per second over a trailing five-second bucketed window, with proportionally weighted boundary buckets |
+| SLO verdict | Latency thresholds use whole-run histograms; error rate uses completed requests; throughput is completed requests divided by elapsed time over the whole run, not the five-second RPS card. A target equal to the measured value passes |
 | Data / sec card | Response body bytes per second over the same trailing window; only fully read responses count, headers are excluded |
 | Global RPS limit | Scheduled HTTP starts across all users; timer lag catch-up is bounded to 10 ms, and idle time does not bank burst credits |
 

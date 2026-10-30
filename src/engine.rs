@@ -227,6 +227,7 @@ async fn coordinate(
         } else {
             RunState::Running
         };
+        snapshot.slo = evaluate_thresholds(&snapshot, &plan.thresholds);
         if persistence_failed {
             snapshot.issue =
                 Some("History writer unavailable; export results before closing".into());
@@ -252,6 +253,8 @@ async fn coordinate(
                 RunState::Completed
             };
             snapshot.issue = issue;
+            // Final verdict is computed after the last counts and state are known.
+            snapshot.slo = evaluate_thresholds(&snapshot, &plan.thresholds);
             let _ = persistence
                 .send(Persist::Finish(Box::new(snapshot.clone())))
                 .await;

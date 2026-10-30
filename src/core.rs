@@ -179,6 +179,87 @@ impl Default for Request {
     }
 }
 
+/// Metric a service-level objective is checked against. Latency and error-rate
+/// targets are upper bounds; throughput is a lower bound.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SloMetric {
+    P50,
+    P90,
+    #[default]
+    P95,
+    P99,
+    Mean,
+    ErrorRate,
+    Throughput,
+}
+impl SloMetric {
+    pub const ALL: [Self; 7] = [
+        Self::P50,
+        Self::P90,
+        Self::P95,
+        Self::P99,
+        Self::Mean,
+        Self::ErrorRate,
+        Self::Throughput,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::P50 => "P50 latency",
+            Self::P90 => "P90 latency",
+            Self::P95 => "P95 latency",
+            Self::P99 => "P99 latency",
+            Self::Mean => "Mean latency",
+            Self::ErrorRate => "Error rate",
+            Self::Throughput => "Throughput",
+        }
+    }
+    pub fn unit(self) -> &'static str {
+        match self {
+            Self::ErrorRate => "%",
+            Self::Throughput => "req/s",
+            _ => "ms",
+        }
+    }
+    pub fn higher_is_better(self) -> bool {
+        self == Self::Throughput
+    }
+}
+
+/// A pass/fail objective. `request_id` scopes it to one request; `None` is the whole run.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Threshold {
+    pub metric: SloMetric,
+    pub value: f64,
+    pub request_id: Option<u64>,
+}
+impl Default for Threshold {
+    fn default() -> Self {
+        Self {
+            metric: SloMetric::P95,
+            value: 300.0,
+            request_id: None,
+        }
+    }
+}
+impl Threshold {
+    /// Short form such as `P95 latency ≤ 300 ms`.
+    pub fn describe(&self) -> String {
+        format!(
+            "{} {} {} {}",
+            self.metric.label(),
+            if self.metric.higher_is_better() {
+                "≥"
+            } else {
+                "≤"
+            },
+            self.value,
+            self.metric.unit()
+        )
+    }
+}
+pub const THRESHOLD_LIMIT: usize = 50;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CsvSource {
@@ -195,6 +276,7 @@ pub struct TestPlan {
     pub variables: Vec<Field>,
     pub csv: CsvSource,
     pub requests: Vec<Request>,
+    pub thresholds: Vec<Threshold>,
 }
 impl Default for TestPlan {
     fn default() -> Self {
@@ -205,6 +287,7 @@ impl Default for TestPlan {
             variables: vec![],
             csv: CsvSource::default(),
             requests: vec![Request::default()],
+            thresholds: vec![],
         }
     }
 }
@@ -317,6 +400,27 @@ impl TestPlan {
                         "Extractor requires a variable name and RFC 6901 JSON pointer".into(),
                     );
                 }
+            }
+        }
+        if self.thresholds.len() > THRESHOLD_LIMIT {
+            return Err(format!(
+                "A plan can have at most {THRESHOLD_LIMIT} SLO thresholds"
+            ));
+        }
+        for t in &self.thresholds {
+            let valid = t.value.is_finite()
+                && match t.metric {
+                    SloMetric::ErrorRate => (0.0..=100.0).contains(&t.value),
+                    _ => t.value > 0.0,
+                };
+            if !valid {
+                return Err(format!(
+                    "Invalid SLO target for {}: latency and throughput must be above 0, error rate 0–100%",
+                    t.metric.label()
+                ));
+            }
+            if t.request_id.is_some_and(|id| !ids.contains(&id)) {
+                return Err("An SLO threshold refers to a request that no longer exists".into());
             }
         }
         self.csv_rows(base)?;

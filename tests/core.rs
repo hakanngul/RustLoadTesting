@@ -248,3 +248,155 @@ fn byte_sizes_use_binary_units() {
     assert_eq!(format_bytes(1536.0), "1.5 KiB");
     assert_eq!(format_bytes(3.0 * 1024.0 * 1024.0), "3.0 MiB");
 }
+
+#[test]
+fn slo_thresholds_round_trip_and_older_plans_still_load() {
+    let plan = TestPlan {
+        thresholds: vec![
+            Threshold::default(),
+            Threshold {
+                metric: SloMetric::ErrorRate,
+                value: 1.0,
+                request_id: Some(1),
+            },
+        ],
+        ..TestPlan::default()
+    };
+    let json = serde_json::to_value(&plan).unwrap();
+    let back: TestPlan = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(back.thresholds, plan.thresholds);
+    // Stored run configurations keep the thresholds too.
+    assert_eq!(plan.redacted().thresholds, plan.thresholds);
+    let mut old = json;
+    old.as_object_mut().unwrap().remove("thresholds");
+    let old: TestPlan = serde_json::from_value(old).unwrap();
+    assert!(old.thresholds.is_empty());
+    assert!(old.validate(std::path::Path::new(".")).is_ok());
+}
+
+#[test]
+fn slo_threshold_validation() {
+    let base = std::path::Path::new(".");
+    let check = |t: Threshold| {
+        let mut plan = TestPlan::default();
+        plan.thresholds.push(t);
+        plan.validate(base)
+    };
+    assert!(check(Threshold::default()).is_ok());
+    let rate = |value| Threshold {
+        metric: SloMetric::ErrorRate,
+        value,
+        request_id: None,
+    };
+    assert!(check(rate(0.0)).is_ok());
+    assert!(check(rate(100.5)).is_err());
+    for value in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(
+            check(Threshold {
+                value,
+                ..Threshold::default()
+            })
+            .is_err()
+        );
+    }
+    assert!(
+        check(Threshold {
+            request_id: Some(99),
+            ..Threshold::default()
+        })
+        .unwrap_err()
+        .contains("no longer exists")
+    );
+    let plan = TestPlan {
+        thresholds: vec![Threshold::default(); THRESHOLD_LIMIT + 1],
+        ..TestPlan::default()
+    };
+    assert!(plan.validate(base).is_err());
+}
+
+fn slo_snapshot() -> Snapshot {
+    let latency = Latency {
+        samples: 10,
+        p50: 10.0,
+        p90: 20.0,
+        p95: 30.0,
+        p99: 40.0,
+        mean: 12.0,
+    };
+    let counts = Counts {
+        completed: 100,
+        successful: 98,
+        failed: 2,
+        ..Counts::default()
+    };
+    Snapshot {
+        state: RunState::Completed,
+        elapsed: 10.0,
+        counts: counts.clone(),
+        latency: latency.clone(),
+        endpoints: vec![
+            Endpoint {
+                id: 1,
+                name: "Login".into(),
+                counts,
+                latency,
+                ..Endpoint::default()
+            },
+            Endpoint {
+                id: 2,
+                name: "Unused".into(),
+                ..Endpoint::default()
+            },
+        ],
+        ..Snapshot::default()
+    }
+}
+
+#[test]
+fn slo_evaluation_uses_bounds_scopes_and_whole_run_throughput() {
+    let s = slo_snapshot();
+    let t = |metric, value, request_id| Threshold {
+        metric,
+        value,
+        request_id,
+    };
+    assert!(evaluate_thresholds(&s, &[]).is_none());
+    let outcome = evaluate_thresholds(
+        &s,
+        &[
+            t(SloMetric::P95, 30.0, None),         // equal to target passes
+            t(SloMetric::P99, 39.9, None),         // above an upper bound fails
+            t(SloMetric::ErrorRate, 2.0, Some(1)), // 2 % on the Login endpoint
+            t(SloMetric::Throughput, 10.0, None),  // 100 completed / 10 s
+            t(SloMetric::Throughput, 10.1, None),  // below a lower bound fails
+            t(SloMetric::Mean, 50.0, Some(2)),     // endpoint without samples
+            t(SloMetric::P50, 50.0, Some(7)),      // request not in the run
+        ],
+    )
+    .unwrap();
+    let statuses: Vec<_> = outcome.results.iter().map(|r| r.status).collect();
+    use ThresholdStatus::*;
+    assert_eq!(statuses, [Pass, Fail, Pass, Pass, Fail, NoData, NoData]);
+    assert_eq!(outcome.results[3].actual, Some(10.0));
+    assert_eq!(outcome.verdict, Verdict::Failed);
+    assert!(!outcome.partial);
+
+    let passing = evaluate_thresholds(&s, &[t(SloMetric::P95, 100.0, None)]).unwrap();
+    assert_eq!(passing.verdict, Verdict::Passed);
+    let missing = evaluate_thresholds(
+        &s,
+        &[
+            t(SloMetric::P95, 100.0, None),
+            t(SloMetric::P95, 100.0, Some(2)),
+        ],
+    )
+    .unwrap();
+    assert_eq!(missing.verdict, Verdict::Inconclusive);
+    let cancelled = Snapshot {
+        state: RunState::Cancelled,
+        ..s
+    };
+    let partial = evaluate_thresholds(&cancelled, &[t(SloMetric::P95, 100.0, None)]).unwrap();
+    assert!(partial.partial);
+    assert_eq!(partial.summary(), "Passed (partial run)");
+}
