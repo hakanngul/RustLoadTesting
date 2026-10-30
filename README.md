@@ -31,7 +31,7 @@ the native Linux app using the bundled HTTP fixture.*
 | Check responses | Expected status codes, response-time limits, and JSON Pointer equality assertions |
 | Configure load | Concurrent users, constant or linear ramp-up profiles, total duration, think time, timeouts, and a global request-start limit |
 | Follow a run | Request rates, latency percentiles, active users, HTTP status counts, endpoint summaries, and filtered logs |
-| Arrange your workspace | Two Studio layouts, named widget pages, drag-to-reorder controls, adjustable widths, and Dark/Light themes |
+| Arrange your workspace | Two Studio layouts, customizable widgets and named pages in Studio, Studio 2 and Monitor, drag-to-reorder controls, adjustable widths, and Dark/Light themes |
 | Keep results | Local SQLite history and HTML, JSON, or CSV exports |
 
 RustLoad is an MVP. Linux execution has been checked; macOS is the product target
@@ -128,7 +128,9 @@ Monitor shows the current run's request rate, response data rate, P50/P95/P99
 latency, error rate, and request count. Charts track throughput, interval latency, and active users.
 HTTP status counts, endpoint results, and filterable logs help you inspect failures.
 SLO threshold results appear under the run title when the plan has any.
-Select a previous run in the sidebar to reopen its saved summary.
+Select a previous run in the sidebar to reopen its saved summary. Everything
+below the run title is a widget page you can rearrange (see
+[Custom dashboards](#custom-dashboards)); the widgets show whichever run is open.
 
 With warmup set under Load Configuration (**By duration** or **By requests**),
 Monitor shows warmup progress, then how many requests it excluded and when
@@ -152,8 +154,11 @@ Dark and Light themes are available throughout the app. You can also view
 
 ## Custom dashboards
 
-In Studio 2, you can save different layouts for different tasks. Keep only a
-throughput chart while editing requests, or create a page dedicated to results.
+Studio, Studio 2 and Monitor each have their own widget pages, so editing one
+workspace never changes the others. The default pages reproduce each
+workspace's built-in layout. In Studio 2 you can keep only a throughput chart
+while editing requests or create a page dedicated to results; in Monitor you can,
+for example, add the latency distribution next to the other result charts.
 
 ![A saved Performance dashboard with throughput, HTTP status distribution, active users, and logs](docs/screenshots/widgets-dashboard.png)
 
@@ -161,15 +166,18 @@ To arrange the current page:
 
 1. Click **Edit layout** to show drag handles and widget controls.
 2. Use **+ Widget** to add a chart, table, log panel, or live metric group.
-3. Drag widgets to change their order. Use their menus to set row widths or move
-   them between the bottom and right panels in a workbench layout.
+3. Drag widgets to change their order. Use their menus to set row widths, move
+   them earlier or later, or move them between docks: Bottom and Right in
+   Studio 2; Main area, Bottom and Right in Monitor. Studio keeps Load
+   Configuration on the right, so its widgets dock only at the bottom.
 4. Click **×** to hide a widget. You can bring it back through **Layouts…**.
    Empty panels disappear, giving the space back to the editors.
 5. Click **Save layout** to save the arrangement on this device.
 
 For a separate page, open **Layouts…** and choose **Create blank page** or
-**Duplicate current page**. New blank pages use dashboard-only mode, which hides
-the request editor. You can rename pages and switch between them during a run.
+**Duplicate current page**. In Studio 2, new blank pages use dashboard-only mode,
+which hides the request editor; Studio and Monitor keep their fixed editor and
+run header. You can rename pages and switch between them during a run.
 
 <details>
 <summary>See widget editing controls</summary>
@@ -178,15 +186,17 @@ the request editor. You can rename pages and switch between them during a run.
 
 </details>
 
-The catalog has eight widgets: throughput, latency, logs, active users, HTTP
-status distribution, endpoint breakdown, live metrics, and latency distribution.
-Each reads the current run. Latency distribution draws the whole-run histogram
+The catalog has ten widgets, available in every workspace: throughput, requests
+per second (total/success/failed), latency, logs, active users, HTTP status
+distribution, endpoint breakdown, live metrics, KPI cards (Monitor's eight
+headline numbers), and latency distribution. In Studio and Studio 2 they read
+the current run; in Monitor they read the current or the opened history run. Latency distribution draws the whole-run histogram
 (measured window only) as up to 40 log-spaced bars between the fastest and
 slowest response, with the P50/P95/P99 of the same histogram marked; hover a bar
 for its range and count. Multiple instances are allowed; log filtering and follow controls are shared
 between log widgets in this version.
 
-Layouts support up to 20 named pages and 16 widgets per page. Names must be unique
+Each workspace supports up to 20 named pages and 16 widgets per page. Names must be unique
 and contain 1 to 60 characters. Layouts are saved separately from test plans;
 saving a plan JSON does not export your dashboard. The
 [widget guide](docs/widgets.md) covers sizing, restoring defaults, and persistence.

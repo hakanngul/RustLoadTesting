@@ -14,11 +14,15 @@ pub enum WidgetKind {
     Endpoints,
     LiveMetrics,
     LatencyHistogram,
+    /// The eight Monitor KPI cards (users, RPS, data/sec, P50/P95/P99, errors, count).
+    KpiCards,
+    /// Requests per second with Total/Success/Failed lines.
+    RequestsPerSecond,
     #[serde(other)]
     Unknown,
 }
 impl WidgetKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Throughput,
         Self::Latency,
         Self::Logs,
@@ -27,6 +31,8 @@ impl WidgetKind {
         Self::Endpoints,
         Self::LiveMetrics,
         Self::LatencyHistogram,
+        Self::KpiCards,
+        Self::RequestsPerSecond,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -38,6 +44,8 @@ impl WidgetKind {
             Self::Endpoints => "Endpoint Breakdown",
             Self::LiveMetrics => "Live Metrics",
             Self::LatencyHistogram => "Latency Distribution",
+            Self::KpiCards => "KPI Cards",
+            Self::RequestsPerSecond => "Requests per Second",
             Self::Unknown => "Unavailable widget",
         }
     }
@@ -47,12 +55,93 @@ impl WidgetKind {
 pub enum Dock {
     Bottom,
     Right,
+    /// The grid below a workspace's fixed header (Monitor only).
+    Main,
 }
 impl Dock {
     pub fn label(self) -> &'static str {
         match self {
             Self::Bottom => "Bottom",
             Self::Right => "Right",
+            Self::Main => "Main area",
+        }
+    }
+}
+
+/// Top-level work areas. Each owns an independent set of dashboard pages.
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+pub enum Workspace {
+    #[default]
+    Studio,
+    Studio2,
+    Monitor,
+}
+impl Workspace {
+    pub const ALL: [Self; 3] = [Self::Studio, Self::Studio2, Self::Monitor];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Studio => "Studio",
+            Self::Studio2 => "Studio 2",
+            Self::Monitor => "Monitor",
+        }
+    }
+    /// Docks a workbench page may use here. Studio keeps Load Configuration on
+    /// the right, so its widgets dock only at the bottom.
+    pub fn docks(self) -> &'static [Dock] {
+        match self {
+            Self::Studio => &[Dock::Bottom],
+            Self::Studio2 => &[Dock::Bottom, Dock::Right],
+            Self::Monitor => &[Dock::Main, Dock::Bottom, Dock::Right],
+        }
+    }
+    /// Only Studio 2 can hide its editors for a dashboard-only page.
+    pub fn allows_dashboard_only(self) -> bool {
+        self == Self::Studio2
+    }
+    /// The page that reproduces this workspace's built-in layout.
+    pub fn default_page(self) -> DashboardPage {
+        let widget = |id, kind, dock, span| Widget {
+            id,
+            kind,
+            dock,
+            visible: true,
+            span,
+        };
+        match self {
+            Self::Studio2 => DashboardPage::default(),
+            Self::Studio => DashboardPage {
+                name: "Studio".into(),
+                bottom_height: 240.0,
+                next_widget_id: 3,
+                widgets: vec![
+                    widget(1, WidgetKind::RequestsPerSecond, Dock::Bottom, Span::Medium),
+                    widget(2, WidgetKind::Latency, Dock::Bottom, Span::Medium),
+                ],
+                ..DashboardPage::default()
+            },
+            Self::Monitor => DashboardPage {
+                name: "Monitor".into(),
+                bottom_height: 180.0,
+                card_height: 240.0,
+                next_widget_id: 8,
+                widgets: vec![
+                    widget(1, WidgetKind::KpiCards, Dock::Main, Span::Full),
+                    widget(2, WidgetKind::RequestsPerSecond, Dock::Main, Span::Medium),
+                    widget(3, WidgetKind::Latency, Dock::Main, Span::Medium),
+                    widget(4, WidgetKind::StatusCodes, Dock::Main, Span::Medium),
+                    widget(5, WidgetKind::ActiveUsers, Dock::Main, Span::Medium),
+                    widget(6, WidgetKind::Endpoints, Dock::Main, Span::Full),
+                    widget(7, WidgetKind::Logs, Dock::Bottom, Span::Full),
+                ],
+                ..DashboardPage::default()
+            },
+        }
+    }
+    pub fn default_dashboards(self) -> Dashboards {
+        Dashboards {
+            active_id: 1,
+            pages: vec![self.default_page()],
+            next_page_id: 2,
         }
     }
 }
@@ -179,6 +268,31 @@ impl DashboardPage {
         });
         self.next_widget_id = next;
         Ok(id)
+    }
+    /// Replace the widgets with `defaults`, giving each a fresh ID so plot
+    /// state of removed widgets never attaches to the restored ones.
+    pub fn reset_widgets(&mut self, defaults: Vec<Widget>) {
+        self.widgets.clear();
+        for default in defaults {
+            if let Ok(id) = self.add(default.kind, default.dock)
+                && let Some(w) = self.widgets.iter_mut().find(|w| w.id == id)
+            {
+                w.visible = default.visible;
+                w.span = default.span;
+            }
+        }
+    }
+    /// Keep the page within what `workspace` can show.
+    pub fn fit(&mut self, workspace: Workspace) {
+        if !workspace.allows_dashboard_only() {
+            self.dashboard_only = false;
+        }
+        let docks = workspace.docks();
+        for widget in &mut self.widgets {
+            if !docks.contains(&widget.dock) {
+                widget.dock = docks[0];
+            }
+        }
     }
     pub fn hide(&mut self, id: u64) {
         if let Some(w) = self.widgets.iter_mut().find(|w| w.id == id) {
@@ -317,6 +431,15 @@ impl Dashboards {
         &mut self.pages[index]
     }
     pub fn create(&mut self, name: &str, copy_active: bool) -> Result<(), String> {
+        self.create_for(Workspace::Studio2, name, copy_active)
+    }
+    /// Add a blank or duplicated page; blank pages follow `workspace`'s rules.
+    pub fn create_for(
+        &mut self,
+        workspace: Workspace,
+        name: &str,
+        copy_active: bool,
+    ) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 60 {
             return Err("Layout names must contain 1–60 characters".into());
@@ -342,8 +465,8 @@ impl Dashboards {
         } else {
             DashboardPage {
                 widgets: vec![],
-                dashboard_only: true,
-                ..DashboardPage::default()
+                dashboard_only: workspace.allows_dashboard_only(),
+                ..workspace.default_page()
             }
         };
         page.id = id;
@@ -376,15 +499,21 @@ impl Dashboards {
         self.active_mut().name = name.into();
         Ok(())
     }
+    /// Studio 2 rules; see [`Dashboards::normalize_for`].
     pub fn normalize(&mut self) {
+        self.normalize_for(Workspace::Studio2);
+    }
+    /// Repair a restored page set for `workspace` without resetting valid pages.
+    pub fn normalize_for(&mut self, workspace: Workspace) {
         self.pages.truncate(MAX_PAGES);
         if self.pages.is_empty() {
-            *self = Self::default();
+            *self = workspace.default_dashboards();
             return;
         }
         let mut ids = std::collections::BTreeSet::new();
         for (index, page) in self.pages.iter_mut().enumerate() {
             page.normalize();
+            page.fit(workspace);
             if page.id == 0 || !ids.insert(page.id) {
                 let mut replacement = index as u64 + 1;
                 while !ids.insert(replacement) {
