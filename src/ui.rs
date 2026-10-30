@@ -15,7 +15,7 @@ use crate::{
     theme::{self, Palette},
 };
 use eframe::egui::{self, Color32, RichText};
-use egui_plot::{Legend, Line, Plot, PlotPoints, Points, VLine};
+use egui_plot::{Bar, BarChart, Legend, Line, Plot, PlotPoints, Points, VLine};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -1369,6 +1369,91 @@ fn metric(ui: &mut egui::Ui, p: Palette, label: &str, value: &str, color: Color3
         ui.add_space(6.0);
         ui.label(RichText::new(value).size(27.0).strong().color(color));
     });
+}
+/// Whole-run latency distribution: log-spaced bars with the P50/P95/P99 of the
+/// same histogram marked. The x axis is log10 of milliseconds.
+fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
+    theme::panel(p).show(ui, |ui| {
+        ui.strong("Latency Distribution (ms) · whole run");
+        if s.latency_distribution.is_empty() {
+            ui.label(RichText::new("Waiting for measurements…").color(p.muted));
+        }
+        let bars: Vec<Bar> = s
+            .latency_distribution
+            .iter()
+            .map(|b| {
+                let (from, to) = (b.from_ms.log10(), b.to_ms.max(b.from_ms * 1.01).log10());
+                Bar::new((from + to) / 2.0, b.count as f64)
+                    .width((to - from) * 0.92)
+                    .fill(p.accent)
+                    .name(format!(
+                        "{} – {} ms",
+                        short_ms(b.from_ms),
+                        short_ms(b.to_ms)
+                    ))
+            })
+            .collect();
+        let peak = s
+            .latency_distribution
+            .iter()
+            .map(|b| b.count)
+            .max()
+            .unwrap_or(0);
+        Plot::new("latency_distribution")
+            .height(height)
+            .include_y(0.0)
+            // Headroom for the hover label drawn above the tallest bar.
+            .include_y(peak as f64 * 1.3)
+            .show_axes([true, true])
+            .legend(Legend::default())
+            .allow_drag(true)
+            .allow_zoom(true)
+            .x_axis_formatter(|mark, _| short_ms(10_f64.powf(mark.value)))
+            .show(ui, |plot| {
+                plot.bar_chart(
+                    BarChart::new("Responses", bars)
+                        .color(p.accent)
+                        .element_formatter(Box::new(|bar, _| {
+                            format!("{}\n{} responses", bar.name, bar.value)
+                        })),
+                );
+                if s.latency.samples > 0 {
+                    for (name, color, value) in [
+                        ("P50", p.p50, s.latency.p50),
+                        ("P95", p.p95, s.latency.p95),
+                        ("P99", p.p99, s.latency.p99),
+                    ] {
+                        plot.vline(
+                            VLine::new(name, value.max(0.001).log10())
+                                .color(color)
+                                .width(1.5_f32),
+                        );
+                    }
+                }
+            });
+        ui.label(
+            RichText::new(format!(
+                "{} fully read responses · log scale · drag to pan, scroll to zoom",
+                s.latency.samples
+            ))
+            .size(11.0)
+            .color(p.muted),
+        );
+    });
+}
+/// Compact millisecond label for axis ticks and bar names.
+fn short_ms(ms: f64) -> String {
+    if ms >= 10_000.0 {
+        format!("{:.0}s", ms / 1000.0)
+    } else if ms >= 1000.0 {
+        format!("{:.1}s", ms / 1000.0)
+    } else if ms >= 10.0 {
+        format!("{ms:.0}")
+    } else if ms >= 1.0 {
+        format!("{ms:.1}")
+    } else {
+        format!("{ms:.2}")
+    }
 }
 #[derive(Clone, Copy)]
 enum Chart {

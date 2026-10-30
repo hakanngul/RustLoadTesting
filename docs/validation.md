@@ -1,5 +1,27 @@
 # Validation evidence
 
+## Latency distribution widget update
+
+Studio 2 gains an eighth widget, **Latency Distribution**: the whole-run
+histogram as at most 40 log-spaced bars with P50/P95/P99 marked.
+
+- `latency_distribution_covers_every_sample_in_log_buckets`: empty histogram has
+  no bars; 1 ms to 2 s spreads over 40 contiguous, equal-ratio buckets whose
+  counts sum to the sample count; 12 responses near 5 ms land in one bar; a
+  single recorded value gives one bar.
+- `latency_distribution_widget_is_an_eighth_catalog_entry`: catalog of 8, the
+  widget can be added and survives a serialization round trip.
+- `hundred_users_real_scenario_history_and_exports` now also checks that the
+  bars of a real run hold exactly the whole-run sample count.
+- Native Linux/Xvfb: added the widget from + Widget > Add to Bottom, ran the
+  Local Demo (80 RPS cap). Dark and Light showed the bars around 0.8–1.1 ms with
+  a sparse tail to ~6 ms and the P50/P95/P99 lines; hovering a bar showed
+  "0.88 – 0.93 ms / 104 responses" (the y range keeps 30% headroom so the label
+  is not clipped). At 900×720 the widget appears as a tab.
+
+Suite: **60 passed** (6 compare, 19 core/report, 10 dashboard-layout, 19 engine,
+6 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## Arrival-rate (open model) update
 
 Load profiles gain **Arrival Rate (open)**: iterations start at a fixed rate on an
@@ -327,7 +349,7 @@ bucket, 98 logs**, with all conservation checks passing.
   remote workflow results must be checked on GitHub separately from these local checks.
 - 1,000-VU capacity and long-running renderer RSS are not benchmarked. The local
   100-VU tests are functional checks, not hardware-independent throughput promises.
-- Flow/Pause/templates, histogram visualization and cookie sessions remain excluded.
+- Flow/Pause/templates and cookie sessions remain excluded.
   File picking uses explicit paths; HTML export is an offline structured report.
 - M0–M3 functionality is implemented and locally checked; M4 remains open for the
   platform/release checks above. This is a runnable MVP, not a signed release.

@@ -117,6 +117,53 @@ pub struct Endpoint {
     pub counts: Counts,
     pub latency: Latency,
 }
+/// One bar of the latency distribution: responses with latency in `from_ms..to_ms`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LatencyBucket {
+    pub from_ms: f64,
+    pub to_ms: f64,
+    pub count: u64,
+}
+/// Bars in the latency distribution; bounded so snapshots stay small.
+pub const DISTRIBUTION_BUCKETS: usize = 40;
+
+/// Whole-run latency distribution in log-spaced buckets between the fastest and
+/// slowest recorded response. Counts come from the histogram's recorded values,
+/// so they sum to its sample count.
+pub fn distribution(h: &Histogram<u64>) -> Vec<LatencyBucket> {
+    if h.is_empty() {
+        return vec![];
+    }
+    let low = h.min().max(1) as f64;
+    let ratio = (h.max() as f64 / low).max(1.0);
+    // min/max are the ends of their equivalence ranges; one range is one bar.
+    let n = if h.equivalent(h.min(), h.max()) {
+        1
+    } else {
+        DISTRIBUTION_BUCKETS
+    };
+    let edge = |i: usize| low * ratio.powf(i as f64 / n as f64) / 1000.0;
+    let mut buckets: Vec<_> = (0..n)
+        .map(|i| LatencyBucket {
+            from_ms: edge(i),
+            to_ms: edge(i + 1),
+            count: 0,
+        })
+        .collect();
+    for v in h.iter_recorded() {
+        let position = (v.value_iterated_to() as f64 / low).ln() / ratio.ln() * n as f64;
+        // Saturating casts put rounding below 0 into the first bucket.
+        let i = if n == 1 {
+            0
+        } else {
+            (position as usize).min(n - 1)
+        };
+        buckets[i].count += v.count_at_value();
+    }
+    buckets
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Snapshot {
@@ -149,6 +196,8 @@ pub struct Snapshot {
     /// Iterations per second of an arrival-rate (open model) run; `None` for
     /// closed-model runs.
     pub arrival_rate: Option<f64>,
+    /// Whole-run response latency distribution (measured window only).
+    pub latency_distribution: Vec<LatencyBucket>,
 }
 impl Snapshot {
     /// Length of the measured window: elapsed time after warmup.
@@ -398,6 +447,7 @@ impl Accumulator {
             active_users: self.users,
             counts: self.counts.clone(),
             latency: latency(&self.total),
+            latency_distribution: distribution(&self.total),
             rps: self.trailing_rate(
                 elapsed,
                 |p| p.completed,

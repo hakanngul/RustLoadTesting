@@ -41,8 +41,13 @@ not modify or stop the active run.
 
 ## Catalog and data
 
-Seven native widgets are available: throughput, P50/P95/P99 latency, live logs,
-active users, HTTP status distribution, endpoint breakdown and the live KPI group.
+Eight native widgets are available: throughput, P50/P95/P99 latency, live logs,
+active users, HTTP status distribution, endpoint breakdown, the live KPI group and
+the latency distribution. The distribution comes from the whole-run histogram as
+`Snapshot.latency_distribution`: at most 40 log-spaced buckets between the fastest
+and slowest recorded response, so every widget instance reads the same bounded
+copy. Layouts saved by an older version that lacks a widget open it as an
+unavailable widget, which normalization removes.
 Multiple instances are allowed. Each graph has an independent plot UI identity.
 They all read the current run's real aggregate data. Log filtering/follow controls
 are shared across log widgets in this first implementation.

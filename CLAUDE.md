@@ -69,8 +69,9 @@ bloke etme. Mevcut snapshot/persistence akışını inceleyerek geliştir.
 - Studio 2'nin kişisel düzenleri hazırdır: widget ekle/gizle/geri getir/sil,
   sürükleyerek sırala, Bottom/Right dock, grid genişlikleri, adlandırılmış sayfalar,
   boş dashboard oluşturma, çoğaltma, yeniden adlandırma ve kaydetme.
-- Yedi widget: throughput, latency, logs, active users, HTTP status distribution,
-  endpoints ve live metrics. Hepsi gerçek mevcut-run verisini kullanır.
+- Sekiz widget: throughput, latency, logs, active users, HTTP status distribution,
+  endpoints, live metrics ve latency distribution (tüm-run histogramından en
+  fazla 40 log-ölçekli kova). Hepsi gerçek mevcut-run verisini kullanır.
 - Düzenler eframe tercihlerinde saklanır; TestPlan, auth veya SQLite çalışma
   konfigürasyonuna karışmaz. **Save layout** hemen kaydeder. Eski tercihlerin
   açılmasını ve eksik/bozuk alanların normalize edilmesini koru.
@@ -207,8 +208,8 @@ kanıtlardır; senin sonraki değişikliğinin otomatik olarak doğrulandığı 
 
 macOS native kabulü, Windows çalıştırma, imzalama/notarization, 1.000 VU kapasitesi
 ve uzun süreli renderer RSS ölçümü henüz doğrulanmamıştır. CI dosyasının varlığı
-remote CI'ın geçtiğini göstermez. Flow, Pause, cookie session, harici worker,
-template ve histogram görselleştirmesi mevcut kapsamda uygulanmış değildir.
+remote CI'ın geçtiğini göstermez. Flow, Pause, cookie session, harici worker
+ve template mevcut kapsamda uygulanmış değildir.
 
 ## Git ve teslim biçimi
 

@@ -190,9 +190,12 @@ test sürerken aralarında geçiş yapabilirsiniz.
 
 </details>
 
-Katalogda yedi widget var: istek hızı, gecikme, loglar, aktif kullanıcılar, HTTP
-durum dağılımı, uç nokta özeti ve canlı metrikler. Hepsi mevcut çalıştırmanın
-verilerini okur. Aynı widgettan birden fazla ekleyebilirsiniz. Bu sürümde log
+Katalogda sekiz widget var: istek hızı, gecikme, loglar, aktif kullanıcılar, HTTP
+durum dağılımı, uç nokta özeti, canlı metrikler ve gecikme dağılımı. Hepsi mevcut
+çalıştırmanın verilerini okur. Gecikme dağılımı, tüm çalıştırmanın histogramını
+(yalnızca ölçüm penceresi) en hızlı ve en yavaş yanıt arasında en fazla 40
+logaritmik aralıklı çubukla çizer; aynı histogramın P50/P95/P99 değerlerini
+işaretler. Çubuğun üzerine gelince aralığı ve yanıt sayısı görünür. Aynı widgettan birden fazla ekleyebilirsiniz. Bu sürümde log
 filtreleri ve otomatik takip ayarı, log widgetları arasında ortaktır.
 
 En fazla 20 düzen, her düzende 16 widget bulunabilir. Sayfa adları benzersiz ve
