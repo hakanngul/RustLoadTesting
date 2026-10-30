@@ -15,6 +15,10 @@ ayrı bir backend servisi veya Docker gerekmez.
 [Kişisel dashboardlar](#kişisel-dashboardlar) · [Ölçümler](#sonuçlar-nasıl-ölçülür) ·
 [Geliştirme](#geliştirme)
 
+RustLoad'u ilk kez mi kullanıyorsunuz? [Kullanım kılavuzu](docs/user-guide_tr.md)
+ilk testten senaryo kurmaya, yük modellerinden sonuçları okumaya ve
+çalıştırmaları karşılaştırmaya kadar adım adım anlatıyor.
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/monitor-light.png">
   <img src="docs/screenshots/monitor-dark.png" alt="RustLoad Monitor ekranında tamamlanmış bir yerel testin gecikme yüzdelikleri, istek hızı, HTTP durum kodları, uç nokta sonuçları ve logları">
@@ -499,6 +503,7 @@ karşılaştırmaları mevcut uygulamanın kapsamı dışında.
 
 ## Belgeler
 
+- [Kullanım kılavuzu](docs/user-guide_tr.md) ([English](docs/user-guide.md))
 - [MVP kapsamı](docs/MVP.md)
 - [Mimari](docs/architecture.md)
 - [Uygulama kararları](docs/decisions.md)

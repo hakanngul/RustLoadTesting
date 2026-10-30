@@ -14,6 +14,9 @@ backend service, or Docker.
 [Custom dashboards](#custom-dashboards) · [Measurements](#how-results-are-measured) ·
 [Development](#development)
 
+New to RustLoad? The [user guide](docs/user-guide.md) walks you through a first
+test, building scenarios, load models, reading results and comparing runs.
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/monitor-light.png">
   <img src="docs/screenshots/monitor-dark.png" alt="RustLoad Monitor showing a completed local test with latency percentiles, request rates, HTTP status counts, endpoint results, and logs">
@@ -463,6 +466,7 @@ implementation.
 
 ## Documentation
 
+- [User guide](docs/user-guide.md) ([Türkçe](docs/user-guide_tr.md))
 - [MVP scope](docs/MVP.md)
 - [Architecture](docs/architecture.md)
 - [Implementation decisions](docs/decisions.md)
