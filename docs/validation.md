@@ -1,5 +1,34 @@
 # Validation evidence
 
+## Warmup update
+
+Load Configuration (Studio and Studio 2, one shared control) gains Warmup: None,
+By duration or By requests. Requests started during warmup go to separate
+counters; the measured window feeds SLO and comparison throughput; charts draw
+warmup completions and the warmup end; HTML reports state what was excluded;
+comparison warns when warmup differs. The measurement contract in `CLAUDE.md`
+and `docs/decisions.md` is updated.
+
+- `duration_warmup_is_excluded_from_every_result_metric`: 1 s warmup at 40 RPS
+  over 3 s. Warmup and measured starts in their expected ranges; started =
+  completed + cancelled per phase; histogram samples, status totals, endpoint
+  starts and bytes contain only measured requests; charted warmup completions
+  equal the warmup counter; measured from 1.0 s; SLO throughput uses the
+  measured window.
+- `request_count_warmup_excludes_exactly_the_first_starts`: exactly 15.
+- `unfinished_warmup_leaves_no_measured_data`: no measured requests, SLO
+  Inconclusive.
+- With warmup ignored in the engine, all three tests fail; with it they pass.
+- `warmup_settings_validate_and_older_plans_have_none` and a comparison test for
+  the measured window and the warmup warning.
+- Native Linux/Xvfb: Local Demo with a 3 s duration warmup. During warmup Monitor
+  showed "Warmup in progress (first 3s) · 41 requests excluded so far" with zero
+  measured cards; afterwards "excluded 60 requests · measured from 3.0s", the gray
+  warmup line for 0–3 s and the dashed warmup-end marker.
+
+Suite: **52 passed** (6 compare, 15 core/report, 9 dashboard-layout, 16 engine,
+6 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## cURL / HAR import update
 
 **Import…** (toolbar, shared by Studio and Studio 2) parses pasted

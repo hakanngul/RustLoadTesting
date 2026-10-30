@@ -137,6 +137,11 @@ uç nokta sonuçları ve filtrelenebilir loglar hataları incelemenize yardımc�
 Planda SLO eşiği varsa sonuçları çalıştırma başlığının altında görünür.
 Kaydedilmiş bir özeti açmak için soldaki geçmişten bir çalıştırma seçin.
 
+Load Configuration altında warmup ayarlandıysa (**By duration** veya **By
+requests**), Monitor önce warmup ilerlemesini, ardından kaç isteğin hariç
+tutulduğunu ve ölçümün ne zaman başladığını gösterir. RPS grafiği warmup
+trafiğini ayrı gri bir çizgiyle çizer ve warmup'ın bittiği anı işaretler.
+
 Kaydedilmiş iki çalıştırmayı karşılaştırmak için kenar çubuğunda birini
 **Baseline** ile sabitleyin, ardından diğerinde **Compare** seçin. Karşılaştırma
 iki çalıştırmanın throughput ve P95 grafiklerini üst üste çizer, tüm çalıştırma
@@ -289,6 +294,7 @@ bağımsız, açık döngülü bir istek varış hızı üretilmez.
 | Yüzdelik kartları | Tüm çalıştırmanın HDR Histogram sonuçları |
 | Yüzdelik grafikleri | Her ölçüm aralığına ait bağımsız histogramlar; aralıkların yüzdelikleri ortalanmaz |
 | RPS kartı | Son beş saniyedeki tamamlanmalardan hesaplanan saniyelik istek sayısı; pencere sınırındaki kovalar kapsanan süreye göre ağırlıklandırılır |
+| Warmup | Opsiyonel; süreye veya istek sayısına göre. Warmup sırasında başlayan istekler hiçbir sonuç metriğine girmez ve ayrı sayılır; toplam süre warmup'ı içerir; tüm çalıştırma throughput'u warmup sonrasındaki süreyi kullanır |
 | Çalıştırma karşılaştırması | Throughput ve veri, her çalıştırmanın tamamında tamamlanan istek ve byte'ların geçen süreye bölümüdür; gecikme tüm çalıştırmanın histogramını kullanır; veri hızı bilgi amaçlıdır ve sonucu etkilemez |
 | SLO kararı | Gecikme eşikleri tüm çalıştırmanın histogramını, hata oranı tamamlanan istekleri kullanır; throughput, beş saniyelik RPS kartı değil, tamamlanan isteklerin tüm süreye bölümüdür. Ölçülen değer hedefe eşitse eşik karşılanmış sayılır |
 | Data / sec kartı | Aynı pencerede saniyedeki yanıt gövdesi byte'ı; yalnızca tamamen okunan yanıtlar sayılır, header'lar dahil değildir |

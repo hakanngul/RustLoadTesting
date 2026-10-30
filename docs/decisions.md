@@ -35,6 +35,14 @@
   Accept-Encoding are dropped (responses are not decompressed). Credential
   headers stay session-only secrets. Unsupported options are listed, not
   guessed. OpenAPI import is a later step.
+- Warmup is None, Duration{secs} or Requests{count}. A request is classified by
+  its start: started during warmup means excluded from every result metric
+  (counts, histograms, statuses, endpoints, bytes) and counted in separate
+  warmup counters, so started = completed + cancelled + in-flight holds per
+  phase. Duration includes warmup. The measured window starts at `secs`, or at
+  the first non-warmup start for request warmup; SLO and comparison throughput
+  divide by that window. An unfinished request warmup leaves no measured data
+  (Inconclusive). Charts show warmup completions separately and mark its end.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.

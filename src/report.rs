@@ -97,6 +97,15 @@ pub fn export(
         }
         "HTML" => {
             let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+            let warmup = if snapshot.warmup == crate::core::Warmup::None {
+                String::new()
+            } else {
+                format!(
+                    " · Warmup ({}): {} requests excluded",
+                    escape(&snapshot.warmup.describe()),
+                    snapshot.warmup_counts.started
+                )
+            };
             let slo = snapshot.slo.as_ref().map_or_else(String::new, |o| {
                 let rows: String = o
                     .results
@@ -116,8 +125,8 @@ pub fn export(
                     escape(&o.summary())
                 )
             });
-            format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>RustLoad report</title><style>body{{background:#131A20;color:#F3F6FA;font:15px system-ui;max-width:1100px;margin:40px auto;padding:20px}}h1{{color:#FF873E}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#1B2229;padding:24px;border-radius:10px}}p{{line-height:1.7}}table{{border-collapse:collapse}}td,th{{border:1px solid #303B46;padding:6px 10px;text-align:left}}</style><h1>{}</h1><p>State: {:?} · Requests: {} · Errors: {:.2}% · P95: {:.2} ms · Data: {}</p><p>Response latency includes full body read; data counts body bytes of fully read responses. Network failures and cancellations are counted separately. RPS uses completed requests. Partial and cancelled runs retain their actual state.</p>{}<details open><summary>Complete report and time series</summary><pre>{}</pre></details></html>",
-                escape(&snapshot.name),snapshot.state,snapshot.counts.completed,snapshot.counts.error_rate(),snapshot.latency.p95,crate::metrics::format_bytes(snapshot.counts.bytes as f64),slo,escape(&json)).into_bytes()
+            format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>RustLoad report</title><style>body{{background:#131A20;color:#F3F6FA;font:15px system-ui;max-width:1100px;margin:40px auto;padding:20px}}h1{{color:#FF873E}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#1B2229;padding:24px;border-radius:10px}}p{{line-height:1.7}}table{{border-collapse:collapse}}td,th{{border:1px solid #303B46;padding:6px 10px;text-align:left}}</style><h1>{}</h1><p>State: {:?} · Requests: {} · Errors: {:.2}% · P95: {:.2} ms · Data: {}{}</p><p>Response latency includes full body read; data counts body bytes of fully read responses. Network failures and cancellations are counted separately. RPS uses completed requests. Partial and cancelled runs retain their actual state.</p>{}<details open><summary>Complete report and time series</summary><pre>{}</pre></details></html>",
+                escape(&snapshot.name),snapshot.state,snapshot.counts.completed,snapshot.counts.error_rate(),snapshot.latency.p95,crate::metrics::format_bytes(snapshot.counts.bytes as f64),warmup,slo,escape(&json)).into_bytes()
         }
         _ => return Err("Unknown report format".into()),
     };

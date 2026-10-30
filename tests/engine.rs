@@ -492,3 +492,79 @@ fn imported_curl_requests_reach_the_server_as_written() {
     assert_eq!(s.counts.failed, 0, "{:?}", s.logs);
     assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
 }
+
+fn warmup_run(warmup: Warmup, duration: u64) -> Snapshot {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = TestPlan::default();
+    plan.requests[0].url = format!("http://{}/health", server.address);
+    plan.load.users = 5;
+    plan.load.duration_secs = duration;
+    plan.load.rps_limit = 40;
+    plan.load.think_ms = 0;
+    plan.load.warmup = warmup;
+    plan.thresholds = vec![Threshold {
+        metric: SloMetric::Throughput,
+        value: 1.0,
+        request_id: None,
+    }];
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    s
+}
+
+#[test]
+fn duration_warmup_is_excluded_from_every_result_metric() {
+    let s = warmup_run(Warmup::Duration { secs: 1 }, 3);
+    let (w, m) = (&s.warmup_counts, &s.counts);
+    // ~40 starts in the first second are warmup; ~80 in the next two are measured.
+    assert!(
+        (30..=50).contains(&w.started),
+        "warmup starts {}",
+        w.started
+    );
+    assert!(
+        (65..=95).contains(&m.started),
+        "measured starts {}",
+        m.started
+    );
+    // Each phase keeps started = completed + cancelled (+ in flight, none at the end).
+    assert_eq!(w.started, w.completed + w.cancelled);
+    assert_eq!(m.started, m.completed + m.cancelled);
+    // Histograms, statuses and endpoints only see measured requests.
+    assert_eq!(s.latency.samples, m.completed);
+    assert_eq!(s.statuses.values().sum::<u64>(), m.completed);
+    assert_eq!(s.endpoints[0].counts.started, m.started);
+    assert_eq!(s.counts.bytes, m.completed * 11);
+    assert_eq!(w.bytes, w.completed * 11);
+    let charted: u64 = s.series.iter().map(|p| p.warmup_completed).sum();
+    assert_eq!(charted, w.completed);
+    assert_eq!((s.measured_from, s.warming_up), (1.0, false));
+    // Throughput uses the measured window, not the whole run.
+    let throughput = s.slo.unwrap().results[0].actual.unwrap();
+    assert!(
+        (30.0..=45.0).contains(&throughput),
+        "throughput {throughput}"
+    );
+}
+
+#[test]
+fn request_count_warmup_excludes_exactly_the_first_starts() {
+    let s = warmup_run(Warmup::Requests { count: 15 }, 2);
+    assert_eq!(s.warmup_counts.started, 15);
+    assert!(s.counts.started > 0);
+    assert_eq!(s.latency.samples, s.counts.completed);
+    assert!(s.measured_from > 0.0 && !s.warming_up);
+}
+
+#[test]
+fn unfinished_warmup_leaves_no_measured_data() {
+    let s = warmup_run(Warmup::Requests { count: 1_000_000 }, 1);
+    assert!(s.warming_up);
+    assert!(s.warmup_counts.completed > 0);
+    assert_eq!((s.counts.started, s.latency.samples), (0, 0));
+    let slo = s.slo.unwrap();
+    assert_eq!(slo.verdict, Verdict::Inconclusive);
+}

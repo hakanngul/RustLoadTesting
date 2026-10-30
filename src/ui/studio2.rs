@@ -175,6 +175,7 @@ impl RustLoadApp {
                 .color(p.muted),
             );
         });
+        warmup_line(ui, &self.live, p);
         slo_badges(ui, &self.live, p);
         ui.add_space(8.0);
         let s = &self.live;
@@ -589,6 +590,10 @@ fn compact_load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
                 );
             });
         });
-        ui.label(RichText::new("Duration includes ramp-up · Stop grace: 5s").size(11.0));
+        ui.horizontal(|ui| {
+            ui.label("Warmup");
+            warmup_control(ui, &mut c.warmup, c.duration_secs, "studio2_warmup");
+        });
+        ui.label(RichText::new("Duration includes ramp-up and warmup · Stop grace: 5s").size(11.0));
     });
 }

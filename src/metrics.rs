@@ -1,4 +1,4 @@
-use crate::core::{SloMetric, Threshold};
+use crate::core::{SloMetric, Threshold, Warmup};
 use hdrhistogram::Histogram;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -95,6 +95,8 @@ pub struct Point {
     pub failed: u64,
     pub latency: Latency,
     pub bytes: u64,
+    /// Completions of warmup requests in this interval (excluded from the counts above).
+    pub warmup_completed: u64,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -133,6 +135,20 @@ pub struct Snapshot {
     pub issue: Option<String>,
     /// SLO evaluation of this snapshot; `None` when the plan has no thresholds.
     pub slo: Option<SloOutcome>,
+    /// Warmup setting of the run.
+    pub warmup: Warmup,
+    /// Requests started during warmup; never part of `counts` or any histogram.
+    pub warmup_counts: Counts,
+    /// Seconds into the run where the measured window starts (0 without warmup).
+    pub measured_from: f64,
+    /// Warmup is configured and still in progress.
+    pub warming_up: bool,
+}
+impl Snapshot {
+    /// Length of the measured window: elapsed time after warmup.
+    pub fn measured_elapsed(&self) -> f64 {
+        (self.elapsed - self.measured_from).max(0.0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -194,7 +210,8 @@ pub fn evaluate_thresholds(s: &Snapshot, thresholds: &[Threshold]) -> Option<Slo
                     SloMetric::Mean => has_latency.then_some(latency.mean),
                     SloMetric::ErrorRate => (counts.completed > 0).then(|| counts.error_rate()),
                     SloMetric::Throughput => {
-                        (s.elapsed > 0.0).then(|| counts.completed as f64 / s.elapsed)
+                        let window = s.measured_elapsed();
+                        (window > 0.0).then(|| counts.completed as f64 / window)
                     }
                 }
             });
@@ -282,7 +299,12 @@ pub struct Accumulator {
     last_successful: u64,
     last_failed: u64,
     last_bytes: u64,
+    last_warmup_completed: u64,
     last_elapsed: f64,
+    /// Requests started during warmup.
+    pub warmup: Counts,
+    /// Elapsed seconds when the first measured request started.
+    pub warmup_ended_at: Option<f64>,
 }
 impl Default for Accumulator {
     fn default() -> Self {
@@ -299,7 +321,10 @@ impl Default for Accumulator {
             last_successful: 0,
             last_failed: 0,
             last_bytes: 0,
+            last_warmup_completed: 0,
             last_elapsed: 0.0,
+            warmup: Counts::default(),
+            warmup_ended_at: None,
         }
     }
 }
@@ -329,11 +354,13 @@ impl Accumulator {
             failed: self.counts.failed - self.last_failed,
             latency: latency(&self.bucket),
             bytes: self.counts.bytes - self.last_bytes,
+            warmup_completed: self.warmup.completed - self.last_warmup_completed,
         };
         self.last_completed = self.counts.completed;
         self.last_successful = self.counts.successful;
         self.last_failed = self.counts.failed;
         self.last_bytes = self.counts.bytes;
+        self.last_warmup_completed = self.warmup.completed;
         self.last_elapsed = elapsed;
         self.bucket.reset();
         if self.series.len() == SERIES_LIMIT {
@@ -386,6 +413,7 @@ impl Accumulator {
                 .collect(),
             series: self.series.clone(),
             logs: self.logs.clone(),
+            warmup_counts: self.warmup.clone(),
             ..Snapshot::default()
         }
     }

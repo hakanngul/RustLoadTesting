@@ -400,3 +400,29 @@ fn slo_evaluation_uses_bounds_scopes_and_whole_run_throughput() {
     assert!(partial.partial);
     assert_eq!(partial.summary(), "Passed (partial run)");
 }
+
+#[test]
+fn warmup_settings_validate_and_older_plans_have_none() {
+    let base = std::path::Path::new(".");
+    let with = |warmup| {
+        let mut plan = TestPlan::default();
+        plan.load.duration_secs = 30;
+        plan.load.warmup = warmup;
+        plan.validate(base)
+    };
+    assert!(with(Warmup::None).is_ok());
+    assert!(with(Warmup::Duration { secs: 29 }).is_ok());
+    assert!(with(Warmup::Duration { secs: 30 }).is_err());
+    assert!(with(Warmup::Duration { secs: 0 }).is_err());
+    assert!(with(Warmup::Requests { count: 1 }).is_ok());
+    assert!(with(Warmup::Requests { count: 0 }).is_err());
+
+    let mut plan = TestPlan::default();
+    plan.load.warmup = Warmup::Requests { count: 50 };
+    let mut json = serde_json::to_value(&plan).unwrap();
+    let back: TestPlan = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(back.load.warmup, Warmup::Requests { count: 50 });
+    json["load"].as_object_mut().unwrap().remove("warmup");
+    let old: TestPlan = serde_json::from_value(json).unwrap();
+    assert_eq!(old.load.warmup, Warmup::None);
+}

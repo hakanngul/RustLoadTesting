@@ -15,7 +15,7 @@ use crate::{
     theme::{self, Palette},
 };
 use eframe::egui::{self, Color32, RichText};
-use egui_plot::{Legend, Line, Plot, PlotPoints};
+use egui_plot::{Legend, Line, Plot, PlotPoints, VLine};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -718,6 +718,7 @@ impl RustLoadApp {
                 metric(ui, p, label, &value, p.accent);
                 ui.add_space(8.0);
             }
+            warmup_line(ui, &self.live, p);
             slo_badges(ui, &self.live, p);
         } else {
             ui.heading("Load Configuration");
@@ -876,6 +877,7 @@ impl RustLoadApp {
                 }
                 if let Some(issue) = &s.issue { ui.colored_label(p.warning, issue); }
                 ui.label(RichText::new("RPS and data/sec: last 5s · Percentiles: entire run, fully read responses · Latency in ms").small().color(p.muted));
+                warmup_line(ui, s, p);
                 slo_badges(ui, s, p);
                 let cards = [
                     ("Virtual Users", format!("{} / {}", s.active_users, s.target_users), p.success),
@@ -1412,6 +1414,9 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                             plot.line(line("Success", p.success, rates(|v| v.successful)));
                             plot.line(line("Failed", p.error, rates(|v| v.failed)));
                         }
+                        if s.warmup != Warmup::None {
+                            plot.line(line("Warmup", p.muted, rates(|v| v.warmup_completed)));
+                        }
                     }
                     Chart::Latency => {
                         for (name, color, f) in [
@@ -1437,6 +1442,13 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                     Chart::Users => {
                         plot.line(line("Active users", p.success, values(|v| v.users as f64)))
                     }
+                }
+                if s.warmup != Warmup::None && !s.warming_up && s.measured_from > 0.0 {
+                    plot.vline(
+                        VLine::new("Warmup end", s.measured_from)
+                            .color(p.muted)
+                            .style(egui_plot::LineStyle::dashed_dense()),
+                    );
                 }
             });
         ui.label(
@@ -1507,8 +1519,13 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
                     .suffix(" bytes"),
             );
             ui.end_row();
+            ui.label("Warmup");
+            warmup_control(ui, &mut c.warmup, c.duration_secs, "warmup");
+            ui.end_row();
         });
-    ui.label("Total duration includes ramp-up. Stop allows up to 5s for in-flight requests.");
+    ui.label(
+        "Total duration includes ramp-up and warmup. Stop allows up to 5s for in-flight requests.",
+    );
 }
 fn threshold_editor(
     ui: &mut egui::Ui,
@@ -1591,6 +1608,83 @@ fn threshold_editor(
         p.muted,
         "Thresholds give each run a Passed/Failed verdict and never stop it. Latency and error rate are upper bounds; throughput is a lower bound measured as completed requests over the whole run.",
     );
+}
+/// Warmup selector shared by the Studio and Studio 2 load editors.
+fn warmup_control(ui: &mut egui::Ui, warmup: &mut Warmup, duration_secs: u64, id: &str) {
+    ui.horizontal(|ui| {
+        let label = match warmup {
+            Warmup::None => "None",
+            Warmup::Duration { .. } => "By duration",
+            Warmup::Requests { .. } => "By requests",
+        };
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(warmup, Warmup::None, "None");
+                let secs = (duration_secs / 10).clamp(1, duration_secs.saturating_sub(1).max(1));
+                if ui
+                    .selectable_label(matches!(warmup, Warmup::Duration { .. }), "By duration")
+                    .clicked()
+                    && !matches!(warmup, Warmup::Duration { .. })
+                {
+                    *warmup = Warmup::Duration { secs };
+                }
+                if ui
+                    .selectable_label(matches!(warmup, Warmup::Requests { .. }), "By requests")
+                    .clicked()
+                    && !matches!(warmup, Warmup::Requests { .. })
+                {
+                    *warmup = Warmup::Requests { count: 100 };
+                }
+            });
+        match warmup {
+            Warmup::None => {}
+            Warmup::Duration { secs } => {
+                ui.add(egui::DragValue::new(secs).range(1..=86_399).suffix(" s"));
+            }
+            Warmup::Requests { count } => {
+                ui.add(
+                    egui::DragValue::new(count)
+                        .range(1..=100_000_000)
+                        .suffix(" req"),
+                );
+            }
+        }
+    })
+    .response
+    .on_hover_text("Requests started during warmup are excluded from every result metric");
+}
+/// Warmup progress or how many requests it excluded; nothing without warmup.
+fn warmup_line(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
+    if s.warmup == Warmup::None || s.run_id.is_empty() {
+        return;
+    }
+    let excluded = s.warmup_counts.started;
+    let (text, color) = match (s.warming_up, s.state.terminal()) {
+        (true, false) => (
+            format!(
+                "Warmup in progress ({}) · {excluded} requests excluded so far",
+                s.warmup.describe()
+            ),
+            p.warning,
+        ),
+        (true, true) => (
+            format!(
+                "Warmup never finished ({}): no measured requests",
+                s.warmup.describe()
+            ),
+            p.warning,
+        ),
+        (false, _) => (
+            format!(
+                "Warmup ({}) excluded {excluded} requests · measured from {:.1}s",
+                s.warmup.describe(),
+                s.measured_from
+            ),
+            p.muted,
+        ),
+    };
+    ui.label(RichText::new(text).small().color(color));
 }
 /// SLO verdict and per-threshold results; nothing when the plan has no thresholds.
 fn slo_badges(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {

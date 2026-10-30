@@ -52,6 +52,26 @@ pub enum Profile {
     RampUp,
 }
 
+/// Requests started during warmup are excluded from every result metric.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Warmup {
+    #[default]
+    None,
+    /// Requests started in the first `secs` seconds of the run.
+    Duration { secs: u64 },
+    /// The first `count` requests started across all users.
+    Requests { count: u64 },
+}
+impl Warmup {
+    pub fn describe(self) -> String {
+        match self {
+            Self::None => "none".into(),
+            Self::Duration { secs } => format!("first {secs}s"),
+            Self::Requests { count } => format!("first {count} requests"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LoadConfig {
@@ -63,6 +83,7 @@ pub struct LoadConfig {
     pub think_ms: u64,
     pub timeout_ms: u64,
     pub body_limit_bytes: usize,
+    pub warmup: Warmup,
 }
 impl Default for LoadConfig {
     fn default() -> Self {
@@ -75,6 +96,7 @@ impl Default for LoadConfig {
             think_ms: 100,
             timeout_ms: 10_000,
             body_limit_bytes: 10 * 1024 * 1024,
+            warmup: Warmup::None,
         }
     }
 }
@@ -343,6 +365,18 @@ impl TestPlan {
         }
         if c.profile == Profile::RampUp && (c.ramp_secs == 0 || c.ramp_secs > c.duration_secs) {
             return Err("Ramp-up must be between 1s and the total duration".into());
+        }
+        match c.warmup {
+            Warmup::Duration { secs } if secs == 0 || secs >= c.duration_secs => {
+                return Err(
+                    "Warmup duration must be at least 1s and shorter than the total duration"
+                        .into(),
+                );
+            }
+            Warmup::Requests { count } if !(1..=100_000_000).contains(&count) => {
+                return Err("Warmup request count must be 1–100,000,000".into());
+            }
+            _ => {}
         }
         if self.requests.is_empty() || self.requests.len() > 500 {
             return Err("A plan needs 1–500 requests".into());
