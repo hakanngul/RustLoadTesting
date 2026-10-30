@@ -209,7 +209,7 @@ row throughout the run; row reuse is opt-in, and duplicate headers are rejected.
 Relative CSV paths resolve against the saved plan's directory. For an unsaved
 plan, they resolve against the process working directory.
 
-### Import from cURL or HAR
+### Import from cURL, HAR or OpenAPI
 
 **Import…** in the toolbar builds requests from your browser. Paste one or more
 commands from DevTools → *Copy as cURL (bash)* (or *Copy all as cURL*), or give
@@ -228,6 +228,17 @@ the requests and warnings, then add them to the plan or replace its requests.
   responses are never imported. Files up to 50 MiB, at most 500 requests.
 - Authorization, Cookie and other credential values are marked secret: they
   work in the current session but are never saved, like any other secret.
+- **OpenAPI (JSON)** takes the path of an OpenAPI 3.x or Swagger 2.0 JSON file
+  and creates one request per GET/POST/PUT/PATCH/DELETE operation (sorted by
+  path). The base URL comes from the first server (variables at their defaults)
+  unless you enter one, which is the usual way to aim a spec at a local or
+  staging target. Path parameters become `{{variables}}` added to the plan with
+  their example values; required query and header parameters and JSON bodies
+  are filled from `example`, `examples`, `default`, `enum` or the schema's
+  property examples. Bearer and OAuth security becomes `{{access_token}}`, a
+  secret variable you fill in before running; Basic Auth needs its credentials;
+  other schemes, cookie parameters and non-JSON bodies are listed in the
+  preview. YAML documents are not supported yet; convert them to JSON first.
 
 ### SLO thresholds
 

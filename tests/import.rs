@@ -197,3 +197,164 @@ fn har_requests_in_order_with_filters() {
     assert!(all.warnings.iter().any(|w| w.contains("not HTTP(S)")));
     assert!(from_har(b"{}", 1, true).is_err());
 }
+
+const PETSTORE: &str = r##"{
+  "openapi": "3.0.3",
+  "servers": [{"url": "https://{env}.example.com/v1", "variables": {"env": {"default": "api"}}}],
+  "security": [{"bearerAuth": []}],
+  "paths": {
+    "/pets/{petId}": {
+      "parameters": [{"$ref": "#/components/parameters/PetId"}],
+      "get": {
+        "operationId": "getPet",
+        "parameters": [
+          {"name": "fields", "in": "query", "required": true, "schema": {"type": "string", "default": "name"}},
+          {"name": "verbose", "in": "query", "schema": {"type": "boolean"}},
+          {"name": "X-Request-Id", "in": "header", "required": true, "example": "abc"},
+          {"name": "session", "in": "cookie", "required": true}
+        ]
+      },
+      "delete": {"summary": "Remove a pet", "security": []},
+      "head": {"operationId": "petExists"}
+    },
+    "/pets": {
+      "post": {
+        "operationId": "createPet",
+        "requestBody": {"$ref": "#/components/requestBodies/Pet"}
+      },
+      "put": {
+        "operationId": "uploadPhoto",
+        "requestBody": {"content": {"image/png": {}}}
+      }
+    },
+    "/owners/{owner-name}": {
+      "get": {"parameters": [{"name": "owner-name", "in": "path", "required": true}]}
+    }
+  },
+  "components": {
+    "parameters": {"PetId": {"name": "petId", "in": "path", "required": true, "schema": {"type": "integer", "example": 42}}},
+    "requestBodies": {"Pet": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}}},
+    "schemas": {"Pet": {"type": "object", "properties": {
+      "name": {"type": "string", "example": "Rex"},
+      "tags": {"type": "array", "items": {"type": "string", "enum": ["dog", "cat"]}},
+      "age": {"type": "integer"}
+    }}},
+    "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}
+  }
+}"##;
+
+#[test]
+fn openapi3_operations_become_requests() {
+    let imported = from_openapi(PETSTORE.as_bytes(), 5, "").unwrap();
+    let by_name = |name: &str| {
+        imported
+            .requests
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("{name} missing: {:?}", imported.requests))
+    };
+    // HEAD is skipped; IDs start at the requested first ID.
+    assert_eq!(imported.requests.len(), 5);
+    assert_eq!(imported.requests[0].id, 5);
+
+    let get = by_name("getPet");
+    assert_eq!(get.method, "GET");
+    assert_eq!(get.url, "https://api.example.com/v1/pets/{{petId}}");
+    assert_eq!(query(get, "fields").unwrap().value, "name");
+    assert!(query(get, "verbose").is_none(), "optional without example");
+    assert_eq!(header(get, "X-Request-Id").unwrap().value, "abc");
+    assert_eq!(get.auth.kind, AuthKind::Bearer);
+    assert_eq!(get.auth.bearer, "{{access_token}}");
+
+    // An empty operation security list overrides the global requirement.
+    let delete = by_name("Remove a pet");
+    assert_eq!(delete.auth.kind, AuthKind::None);
+
+    let post = by_name("createPet");
+    assert!(post.body.json);
+    let body: serde_json::Value = serde_json::from_str(&post.body.text).unwrap();
+    assert_eq!(body, serde_json::json!({"name": "Rex", "tags": ["dog"]}));
+    assert!(by_name("uploadPhoto").body.text.is_empty());
+
+    let owner = by_name("/owners/{owner-name}");
+    assert_eq!(
+        owner.url,
+        "https://api.example.com/v1/owners/{{owner_name}}"
+    );
+
+    let var = |name: &str| imported.variables.iter().find(|v| v.name == name).unwrap();
+    assert_eq!(var("petId").value, "42");
+    assert!(!var("petId").secret);
+    assert_eq!(var("owner_name").value, "");
+    assert!(var("access_token").secret && var("access_token").value.is_empty());
+    let warnings = imported.warnings.join("\n");
+    for expected in [
+        "path variables without an example: owner_name",
+        "{{access_token}}",
+        "1 HEAD/OPTIONS/TRACE",
+        "1 cookie parameters",
+        "1 non-JSON request bodies",
+    ] {
+        assert!(warnings.contains(expected), "{expected:?} in {warnings}");
+    }
+    // The plan accepts them once the secret variable has a value.
+    let mut plan = TestPlan {
+        requests: imported.requests.clone(),
+        variables: imported.variables.clone(),
+        ..TestPlan::default()
+    };
+    assert!(
+        plan.validate(std::path::Path::new(".")).is_err(),
+        "token required"
+    );
+    plan.variables
+        .iter_mut()
+        .find(|v| v.name == "access_token")
+        .unwrap()
+        .value = "t".into();
+    plan.validate(std::path::Path::new(".")).unwrap();
+}
+
+#[test]
+fn swagger2_and_base_url_rules() {
+    let swagger = r##"{
+      "swagger": "2.0", "host": "legacy.example.com", "basePath": "/api", "schemes": ["http"],
+      "securityDefinitions": {"basic": {"type": "basic"}},
+      "paths": {"/orders": {"post": {
+        "operationId": "createOrder", "security": [{"basic": []}],
+        "parameters": [{"name": "order", "in": "body", "schema": {"example": {"qty": 2}}}]
+      }}}
+    }"##;
+    let imported = from_openapi(swagger.as_bytes(), 1, "").unwrap();
+    let r = &imported.requests[0];
+    assert_eq!(r.url, "http://legacy.example.com/api/orders");
+    assert_eq!(r.auth.kind, AuthKind::Basic);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&r.body.text).unwrap(),
+        serde_json::json!({"qty": 2})
+    );
+    // The base URL field replaces the document's server.
+    let local = from_openapi(swagger.as_bytes(), 1, "http://127.0.0.1:8080/").unwrap();
+    assert_eq!(local.requests[0].url, "http://127.0.0.1:8080/orders");
+
+    let relative = r#"{"openapi": "3.1.0", "servers": [{"url": "/v2"}], "paths": {}}"#;
+    assert!(
+        from_openapi(relative.as_bytes(), 1, "")
+            .unwrap_err()
+            .contains("enter a base URL")
+    );
+    assert!(from_openapi(relative.as_bytes(), 1, "http://localhost:9").is_ok());
+    for bad in ["http://user:pw@host", "ftp://host", "http://host/?a=1"] {
+        assert!(from_openapi(relative.as_bytes(), 1, bad).is_err(), "{bad}");
+    }
+    assert!(
+        from_openapi(b"openapi: 3.0.0\npaths: {}", 1, "")
+            .unwrap_err()
+            .contains("YAML")
+    );
+    assert!(
+        from_openapi(br#"{"info": {}}"#, 1, "")
+            .unwrap_err()
+            .contains("OpenAPI")
+    );
+}

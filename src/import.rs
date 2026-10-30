@@ -1,5 +1,6 @@
-//! Builds requests from browser "Copy as cURL (bash)" commands and HAR files.
-//! Only request data is imported; HAR responses are never read or stored.
+//! Builds requests from browser "Copy as cURL (bash)" commands, HAR files and
+//! OpenAPI/Swagger JSON documents. Only request data is imported; HAR
+//! responses are never read or stored.
 use crate::core::{Auth, AuthKind, Body, Field, Request, sensitive};
 use serde::Deserialize;
 
@@ -26,6 +27,9 @@ const DROPPED_HEADERS: [&str; 10] = [
 pub struct Imported {
     pub requests: Vec<Request>,
     pub warnings: Vec<String>,
+    /// Plan variables the requests refer to (OpenAPI path parameters and
+    /// credentials); added to the plan unless a variable of that name exists.
+    pub variables: Vec<Field>,
 }
 
 /// Request data before it is turned into a [`Request`].
@@ -56,6 +60,7 @@ impl Notes {
         Imported {
             requests,
             warnings: self.warnings,
+            variables: vec![],
         }
     }
 }
@@ -666,4 +671,350 @@ pub fn from_har(bytes: &[u8], first_id: u64, api_only: bool) -> Result<Imported,
             .push(format!("Skipped {not_http} entries that are not HTTP(S)"));
     }
     Ok(notes.finish(requests))
+}
+
+// ---------------------------------------------------------------- OpenAPI
+
+use serde_json::Value;
+
+const OPENAPI_METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
+
+/// Follows local `$ref`s (`#/components/...`, `#/definitions/...`).
+fn resolve<'a>(doc: &'a Value, mut value: &'a Value) -> &'a Value {
+    for _ in 0..16 {
+        match value
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|r| r.strip_prefix('#'))
+            .and_then(|pointer| doc.pointer(pointer))
+        {
+            Some(target) => value = target,
+            None => break,
+        }
+    }
+    value
+}
+
+/// An example value from a parameter, media type or schema: `example`, the
+/// first of `examples`, `default`, the first `enum` value, or (for objects and
+/// arrays) one assembled from the properties' examples.
+fn sample(doc: &Value, value: &Value, depth: u8) -> Option<Value> {
+    let value = resolve(doc, value);
+    if depth > 6 {
+        return None;
+    }
+    if let Some(example) = value.get("example") {
+        return Some(example.clone());
+    }
+    if let Some(first) = value.get("examples").and_then(|e| match e {
+        Value::Object(map) => map.values().next(),
+        Value::Array(list) => list.first(),
+        _ => None,
+    }) {
+        let first = resolve(doc, first);
+        return Some(first.get("value").unwrap_or(first).clone());
+    }
+    if let Some(default) = value.get("default") {
+        return Some(default.clone());
+    }
+    if let Some(first) = value.get("enum").and_then(|e| e.get(0)) {
+        return Some(first.clone());
+    }
+    if let Some(schema) = value.get("schema") {
+        return sample(doc, schema, depth + 1);
+    }
+    if let Some(properties) = value.get("properties").and_then(Value::as_object) {
+        let object: serde_json::Map<_, _> = properties
+            .iter()
+            .filter_map(|(k, v)| sample(doc, v, depth + 1).map(|v| (k.clone(), v)))
+            .collect();
+        return (!object.is_empty()).then_some(Value::Object(object));
+    }
+    if let Some(items) = value.get("items") {
+        return sample(doc, items, depth + 1).map(|v| Value::Array(vec![v]));
+    }
+    None
+}
+
+fn text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// A variable name usable in `{{…}}` from an OpenAPI parameter name.
+fn variable_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Base URL from `servers` (OpenAPI 3, with variables at their defaults) or
+/// `schemes`/`host`/`basePath` (Swagger 2.0), unless `override_url` is set.
+fn base_url(doc: &Value, override_url: &str) -> Result<String, String> {
+    let raw = if !override_url.trim().is_empty() {
+        override_url.trim().to_owned()
+    } else if doc.get("swagger").is_some() {
+        let host = doc
+            .get("host")
+            .and_then(Value::as_str)
+            .ok_or("The document has no host; enter a base URL")?;
+        let scheme = doc
+            .pointer("/schemes/0")
+            .and_then(Value::as_str)
+            .unwrap_or("https");
+        let base_path = doc.get("basePath").and_then(Value::as_str).unwrap_or("");
+        format!("{scheme}://{host}{base_path}")
+    } else {
+        let server = doc
+            .pointer("/servers/0")
+            .ok_or("The document has no servers; enter a base URL")?;
+        let mut url = server
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if let Some(vars) = server.get("variables").and_then(Value::as_object) {
+            for (name, var) in vars {
+                if let Some(default) = var.get("default") {
+                    url = url.replace(&format!("{{{name}}}"), &text(default));
+                }
+            }
+        }
+        url
+    };
+    let url = url::Url::parse(&raw)
+        .map_err(|_| format!("Server URL {raw:?} is not absolute; enter a base URL"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("The base URL must be an http(s) URL with a host".into());
+    }
+    if !url.username().is_empty() || url.query().is_some() || raw.contains('{') {
+        return Err("The base URL cannot contain credentials, a query or variables".into());
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
+/// Imports the operations of an OpenAPI 3.x or Swagger 2.0 JSON document, one
+/// request per GET/POST/PUT/PATCH/DELETE operation. Path parameters become
+/// `{{variables}}`; required query and header parameters and JSON bodies are
+/// filled from examples where the document has them.
+pub fn from_openapi(bytes: &[u8], first_id: u64, base_override: &str) -> Result<Imported, String> {
+    let doc: Value = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Not a JSON document (YAML is not supported): {e}"))?;
+    let version = doc
+        .get("openapi")
+        .or_else(|| doc.get("swagger"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !(version.starts_with("3.") || version == "2.0") {
+        return Err("Not an OpenAPI 3.x or Swagger 2.0 document".into());
+    }
+    let base = base_url(&doc, base_override)?;
+    let paths = doc
+        .get("paths")
+        .and_then(Value::as_object)
+        .ok_or("The document has no paths")?;
+    let mut notes = Notes::default();
+    let mut requests = Vec::new();
+    let mut variables: Vec<Field> = Vec::new();
+    let mut missing_values = std::collections::BTreeSet::new();
+    let (mut other_methods, mut cookies, mut no_example, mut not_json, mut other_auth) =
+        (0, 0, 0, 0, std::collections::BTreeSet::new());
+    let mut add_variable = |name: String, value: String, secret: bool| {
+        if !variables.iter().any(|v| v.name == name) {
+            variables.push(Field {
+                name,
+                value,
+                secret,
+            });
+        }
+    };
+    'paths: for (path, item) in paths {
+        let item = resolve(&doc, item);
+        let Some(operations) = item.as_object() else {
+            continue;
+        };
+        for (method, op) in operations {
+            if !OPENAPI_METHODS.contains(&method.as_str()) {
+                other_methods +=
+                    usize::from(matches!(method.as_str(), "head" | "options" | "trace"));
+                continue;
+            }
+            if requests.len() >= IMPORT_LIMIT {
+                notes.warnings.push(format!(
+                    "Stopped at {IMPORT_LIMIT} requests, the plan limit"
+                ));
+                break 'paths;
+            }
+            let op = resolve(&doc, op);
+            // Operation parameters override path-level ones with the same name and location.
+            let mut params: Vec<&Value> = Vec::new();
+            for list in [item.get("parameters"), op.get("parameters")]
+                .into_iter()
+                .flatten()
+            {
+                for p in list.as_array().into_iter().flatten() {
+                    let p = resolve(&doc, p);
+                    let key = |v: &Value| (v.get("name").cloned(), v.get("in").cloned());
+                    params.retain(|q| key(q) != key(p));
+                    params.push(p);
+                }
+            }
+            let mut url_path = path.clone();
+            let (mut query, mut headers) = (Vec::new(), Vec::new());
+            let mut body = Body::default();
+            for p in params {
+                let name = p.get("name").and_then(Value::as_str).unwrap_or_default();
+                let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
+                let example = sample(&doc, p, 0).map(|v| text(&v));
+                match p.get("in").and_then(Value::as_str).unwrap_or_default() {
+                    "path" => {
+                        let var = variable_name(name);
+                        url_path =
+                            url_path.replace(&format!("{{{name}}}"), &format!("{{{{{var}}}}}"));
+                        if example.is_none() {
+                            missing_values.insert(var.clone());
+                        }
+                        add_variable(var, example.unwrap_or_default(), sensitive(name));
+                    }
+                    "query" if required || example.is_some() => {
+                        query.push(field(name, &example.unwrap_or_default()));
+                    }
+                    "header" if required => {
+                        let lower = name.to_ascii_lowercase();
+                        if !matches!(lower.as_str(), "accept" | "content-type" | "authorization") {
+                            headers.push(field(name, &example.unwrap_or_default()));
+                        }
+                    }
+                    "cookie" => cookies += 1,
+                    // Swagger 2.0 body parameter.
+                    "body" => match sample(&doc, p, 0) {
+                        Some(v) => {
+                            body.text = serde_json::to_string_pretty(&v).unwrap_or_default();
+                            body.json = true;
+                        }
+                        None => no_example += 1,
+                    },
+                    _ => {}
+                }
+            }
+            if let Some(content) = op
+                .get("requestBody")
+                .map(|b| resolve(&doc, b))
+                .and_then(|b| b.get("content"))
+                .and_then(Value::as_object)
+            {
+                match content.iter().find(|(kind, _)| kind.contains("json")) {
+                    Some((_, media)) => match sample(&doc, media, 0) {
+                        Some(v) => {
+                            body.text = serde_json::to_string_pretty(&v).unwrap_or_default();
+                            body.json = true;
+                        }
+                        None => no_example += 1,
+                    },
+                    None => not_json += 1,
+                }
+            }
+            let mut auth = Auth::default();
+            let security = op.get("security").or_else(|| doc.get("security"));
+            for requirement in security.and_then(Value::as_array).into_iter().flatten() {
+                for scheme_name in requirement
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(k, _)| k)
+                {
+                    let key = scheme_name.replace('~', "~0").replace('/', "~1");
+                    let scheme = doc
+                        .pointer(&format!("/components/securitySchemes/{key}"))
+                        .or_else(|| doc.pointer(&format!("/securityDefinitions/{key}")))
+                        .map(|s| resolve(&doc, s));
+                    let kind = scheme.and_then(|s| s.get("type")).and_then(Value::as_str);
+                    let http = scheme.and_then(|s| s.get("scheme")).and_then(Value::as_str);
+                    if auth.kind == AuthKind::None
+                        && (matches!(kind, Some("http"))
+                            && http.is_some_and(|h| h.eq_ignore_ascii_case("bearer"))
+                            || matches!(kind, Some("oauth2" | "openIdConnect")))
+                    {
+                        // A reference keeps the token out of the plan; its value is secret.
+                        auth.kind = AuthKind::Bearer;
+                        auth.bearer = "{{access_token}}".into();
+                        add_variable("access_token".into(), String::new(), true);
+                    } else if auth.kind == AuthKind::None
+                        && (kind == Some("basic")
+                            || kind == Some("http")
+                                && http.is_some_and(|h| h.eq_ignore_ascii_case("basic")))
+                    {
+                        auth.kind = AuthKind::Basic;
+                    } else if auth.kind == AuthKind::None {
+                        other_auth.insert(scheme_name.clone());
+                    }
+                }
+            }
+            let name = op
+                .get("operationId")
+                .or_else(|| op.get("summary"))
+                .and_then(Value::as_str)
+                .unwrap_or(path);
+            requests.push(Request {
+                id: first_id + requests.len() as u64,
+                name: name.chars().take(60).collect(),
+                method: method.to_ascii_uppercase(),
+                url: format!("{base}{url_path}"),
+                query,
+                headers,
+                body,
+                auth,
+                ..Request::default()
+            });
+        }
+    }
+    if !missing_values.is_empty() {
+        notes.warnings.push(format!(
+            "Set values for path variables without an example: {}",
+            missing_values.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if requests.iter().any(|r| r.auth.kind == AuthKind::Bearer) {
+        notes
+            .warnings
+            .push("Bearer requests use {{access_token}}; enter it as a secret variable".into());
+    }
+    if requests.iter().any(|r| r.auth.kind == AuthKind::Basic) {
+        notes
+            .warnings
+            .push("Basic Auth requests need a username and password before running".into());
+    }
+    if !other_auth.is_empty() {
+        notes.warnings.push(format!(
+            "Add credentials for these security schemes manually: {}",
+            other_auth.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    for (count, what) in [
+        (
+            other_methods,
+            "HEAD/OPTIONS/TRACE operations skipped (unsupported methods)",
+        ),
+        (cookies, "cookie parameters skipped (no cookie support)"),
+        (
+            no_example,
+            "JSON bodies left empty (no example in the document)",
+        ),
+        (not_json, "non-JSON request bodies left empty"),
+    ] {
+        if count > 0 {
+            notes.warnings.push(format!("{count} {what}"));
+        }
+    }
+    let mut imported = notes.finish(requests);
+    imported.variables = variables;
+    Ok(imported)
 }

@@ -738,3 +738,46 @@ fn failures_are_grouped_by_sanitized_reason() {
             .any(|l| l.level == "ERROR" && l.message.ends_with("Connection refused"))
     );
 }
+
+#[test]
+fn imported_openapi_requests_reach_the_server() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let doc = r##"{
+      "openapi": "3.0.3",
+      "servers": [{"url": "https://api.invalid"}],
+      "paths": {"/{endpoint}": {
+        "parameters": [{"name": "endpoint", "in": "path", "required": true, "example": "echo"}],
+        "get": {"operationId": "echoGet", "parameters": [
+          {"name": "q", "in": "query", "required": true, "schema": {"default": "1"}},
+          {"name": "X-Custom", "in": "header", "required": true, "example": "yes"}
+        ]},
+        "post": {"operationId": "echoPost", "requestBody": {"content": {"application/json": {
+          "schema": {"$ref": "#/components/schemas/Item"}}}}}
+      }},
+      "components": {"schemas": {"Item": {"properties": {"x": {"example": 1}}}}}
+    }"##;
+    let base = format!("http://{}", server.address);
+    let mut imported = rustload::import::from_openapi(doc.as_bytes(), 1, &base).unwrap();
+    let expect = |pointer: &str, value: &str| Assertions {
+        json_pointer: pointer.into(),
+        json_expected: value.into(),
+        ..Assertions::default()
+    };
+    imported.requests[0].assertions = expect("/request/target", "\"/echo?q=1\"");
+    imported.requests[1].assertions = expect("/request/content_type", "\"application/json\"");
+    let mut plan = TestPlan {
+        requests: imported.requests,
+        variables: imported.variables,
+        ..TestPlan::default()
+    };
+    plan.load.users = 1;
+    plan.load.duration_secs = 1;
+    plan.load.rps_limit = 30;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    assert_eq!(s.counts.failed, 0, "{:?} {:?}", s.errors, s.logs);
+    assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
+}
