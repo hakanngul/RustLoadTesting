@@ -33,8 +33,8 @@ Run from Studio 2 keeps this layout open; Run from Studio retains the original
 automatic Monitor transition. Editing is locked during execution, Stop stays
 available, and moving between layouts does not start or stop another run.
 
-On smaller windows the metrics are collapsible, Body/Load become tabs and the
-bottom charts/logs become tabs. Long tree labels truncate rather than expanding
+On smaller windows the right-dock widgets (Live Metrics by default) collapse under
+**Dashboard widgets**, Body/Load become tabs and the bottom charts/logs become tabs. Long tree labels truncate rather than expanding
 the sidebar. Themes and metrics retain the same semantic tokens.
 
 The tree represents the existing sequential scenario model. Visual folders do not
