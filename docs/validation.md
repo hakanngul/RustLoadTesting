@@ -1,5 +1,32 @@
 # Validation evidence
 
+## SLO thresholds update
+
+Plans gain up to 50 thresholds (P50/P90/P95/P99/mean latency, error rate,
+throughput; whole run or one request). Every snapshot carries the evaluation;
+the final verdict is computed after the last counts and state, persisted with
+the summary, and exported in HTML (section and table), JSON and CSV
+(`slo_verdict` column).
+
+- `slo_evaluation_uses_bounds_scopes_and_whole_run_throughput`: equality passes,
+  upper/lower bounds, endpoint scope, missing endpoint and empty histogram give
+  no data, Failed beats Inconclusive, partial flag on cancelled runs.
+- `slo_threshold_validation`, `slo_thresholds_round_trip_and_older_plans_still_load`:
+  ranges, NaN/infinity, unknown request, the 50 limit; plans saved before this
+  change load with no thresholds; stored configurations keep thresholds.
+- `slo_verdict_is_final_persisted_and_exported`: real fixture traffic. `/health`
+  gives Passed; `/status/500` gives Failed with a 100 % error rate. The verdict
+  and thresholds are read back from SQLite; HTML and CSV contain the verdict.
+- Native Linux/Xvfb: added two thresholds in the Studio editor (P95 ≤ 300 ms for
+  all requests, P99 ≤ 0.1 ms for Checkout). During the Local Demo run Monitor
+  showed "currently failing" with per-threshold pass/fail; after 30 s it showed
+  "SLO Failed" (P95 0.94 ms pass, Checkout P99 5.94 ms fail). Studio 2 (Light)
+  showed the tree items, the shared editor and the verdict in Live Metrics.
+  Checked at 900×720 and after reopening the run from history.
+
+Suite: **34 passed** (14 core/report, 9 dashboard-layout, 11 engine). Format,
+strict all-target Clippy and build pass. Linux only; macOS CI separate.
+
 ## Compatible history and Byte/s update
 
 Persisted metric structs (`Snapshot`, `Point`, `Counts`, `Latency`, `Endpoint`,

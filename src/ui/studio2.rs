@@ -175,6 +175,7 @@ impl RustLoadApp {
                 .color(p.muted),
             );
         });
+        slo_badges(ui, &self.live, p);
         ui.add_space(8.0);
         let s = &self.live;
         let target = if s.run_id.is_empty() {
@@ -353,6 +354,13 @@ impl RustLoadApp {
                                 if tree_item(ui, !self.plan_settings && self.selected == i && self.tab == 4, format!("{} · Status {status}", r.name)).clicked() { self.selected = i; self.tab = 4; self.plan_settings = false; }
                                 if let Some(max) = r.assertions.max_ms
                                     && tree_item(ui, false, format!("Response time <= {max} ms")).clicked() { self.selected = i; self.tab = 4; self.plan_settings = false; }
+                            }
+                        });
+                        egui::CollapsingHeader::new("SLO Thresholds").default_open(true).show(ui, |ui| {
+                            if self.plan.thresholds.is_empty()
+                                && tree_item(ui, false, "Add SLO thresholds").clicked() { self.plan_settings = true; }
+                            for t in &self.plan.thresholds {
+                                if tree_item(ui, self.plan_settings, t.describe()).clicked() { self.plan_settings = true; }
                             }
                         });
                         egui::CollapsingHeader::new("CSV Data / Variables").default_open(true).show(ui, |ui| {

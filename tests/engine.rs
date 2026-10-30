@@ -373,3 +373,55 @@ fn response_bytes_are_counted_per_endpoint_and_interval() {
         .sum();
     assert_eq!(stored, s.counts.bytes);
 }
+
+#[test]
+fn slo_verdict_is_final_persisted_and_exported() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db");
+    let run = |path: &str| {
+        let mut plan = TestPlan::default();
+        plan.load.users = 2;
+        plan.load.duration_secs = 1;
+        plan.load.rps_limit = 20;
+        plan.requests[0].url = format!("http://{}{path}", server.address);
+        plan.thresholds = vec![
+            Threshold {
+                metric: SloMetric::ErrorRate,
+                value: 1.0,
+                request_id: None,
+            },
+            Threshold {
+                metric: SloMetric::P95,
+                value: 5_000.0,
+                request_id: Some(1),
+            },
+        ];
+        let mut handle = engine::start(&rt, plan.clone(), Path::new("."), db.clone()).unwrap();
+        (wait(&rt, &mut handle), plan)
+    };
+    let (ok, _) = run("/health");
+    let ok_slo = ok.slo.as_ref().unwrap();
+    assert_eq!((ok_slo.verdict, ok_slo.partial), (Verdict::Passed, false));
+    let (bad, plan) = run("/status/500");
+    let bad_slo = bad.slo.as_ref().unwrap();
+    assert_eq!(bad_slo.verdict, Verdict::Failed);
+    assert_eq!(bad_slo.results[0].status, ThresholdStatus::Fail);
+    assert_eq!(bad_slo.results[0].actual, Some(100.0));
+    server.stop.cancel();
+
+    let (stored, config) = History::open(&db).unwrap().read(&bad.run_id).unwrap();
+    assert_eq!(stored.slo.unwrap().verdict, Verdict::Failed);
+    assert_eq!(config.thresholds, plan.thresholds);
+    let html = dir.path().join("report.html");
+    report::export(&html, "HTML", &bad, &plan, &[]).unwrap();
+    let html = std::fs::read_to_string(html).unwrap();
+    assert!(html.contains("<h2>SLO: Failed</h2>"));
+    assert!(html.contains("Error rate ≤ 1 %"));
+    let csv = dir.path().join("report.csv");
+    report::export(&csv, "CSV", &bad, &plan, &[]).unwrap();
+    let csv = std::fs::read_to_string(csv).unwrap();
+    assert!(csv.lines().next().unwrap().ends_with(",slo_verdict"));
+    assert!(csv.lines().nth(1).unwrap().ends_with(",Failed"));
+}
