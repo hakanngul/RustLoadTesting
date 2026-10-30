@@ -353,10 +353,19 @@ fn swagger2_and_base_url_rules() {
     for bad in ["http://user:pw@host", "ftp://host", "http://host/?a=1"] {
         assert!(from_openapi(relative.as_bytes(), 1, bad).is_err(), "{bad}");
     }
+    // YAML documents are read; a broken document is refused briefly.
     assert!(
-        from_openapi(b"openapi: 3.0.0\npaths: {}", 1, "")
+        from_openapi(
+            b"openapi: 3.0.0\nservers: [{url: 'http://h'}]\npaths: {}",
+            1,
+            ""
+        )
+        .is_ok()
+    );
+    assert!(
+        from_openapi(b"{\"openapi\": ", 1, "")
             .unwrap_err()
-            .contains("YAML")
+            .starts_with("Not a valid JSON or YAML document: JSON: ")
     );
     assert!(
         from_openapi(br#"{"info": {}}"#, 1, "")
@@ -900,7 +909,7 @@ fn openapi_external_refs_stay_local_and_bounded() {
         &[
             ("outside.json", &format!(r#"{{"x": "{marker}"}}"#)),
             ("spec/ok.json", r#"{"type": "string", "example": "fine"}"#),
-            ("spec/notes.yaml", &format!("x: {marker}\n")),
+            ("spec/notes.yaml", &format!("x: [{marker}\n")),
         ],
     );
     // Exactly at the limit is read; one byte more is not.
@@ -976,10 +985,7 @@ fn openapi_external_refs_stay_local_and_bounded() {
     );
     warned("file:///etc/hosts", "uses an unsupported scheme");
     warned("missing.json", "names a file that does not exist");
-    warned(
-        "notes.yaml",
-        "names a file that is not JSON (YAML is not supported yet)",
-    );
+    warned("notes.yaml", "names a file that is not valid JSON or YAML");
     warned("big.json", "names a file larger than 10 MiB");
     warned("ok.json#/nope", "points to nothing");
     warned("#/components/schemas/Missing", "points to nothing");
@@ -1098,4 +1104,309 @@ fn openapi_servers_and_variables_can_be_chosen() {
 
 fn url_of(spec: &OpenApiSpec, key: &str) -> String {
     spec.build(&keys(&[key]), 1).requests[0].url.clone()
+}
+
+/// [`PETSTORE`] written as YAML: block and flow styles, comments, quoting
+/// and response-code keys that are YAML integers.
+const PETSTORE_YAML: &str = r##"# The petstore of `openapi3_operations_become_requests`, in YAML.
+openapi: "3.0.3"
+servers:
+  - url: https://{env}.example.com/v1
+    variables:
+      env: {default: api}
+security:
+  - bearerAuth: []
+paths:
+  /pets/{petId}:
+    parameters:
+      - $ref: '#/components/parameters/PetId'
+    get:
+      operationId: getPet
+      parameters:
+        - {name: fields, in: query, required: true, schema: {type: string, default: name}}
+        - name: verbose
+          in: query
+          schema:
+            type: boolean
+        - name: X-Request-Id
+          in: header
+          required: true
+          example: abc
+        - {name: session, in: cookie, required: true}
+      responses:
+        200: {description: The pet}
+        404:
+          description: Not found
+    delete:
+      summary: Remove a pet
+      security: []
+    head:
+      operationId: petExists
+  /pets:
+    post:
+      operationId: createPet
+      requestBody:
+        $ref: "#/components/requestBodies/Pet"
+    put:
+      operationId: uploadPhoto
+      requestBody:
+        content:
+          image/png: {}
+  /owners/{owner-name}:
+    get:
+      parameters:
+        - name: owner-name
+          in: path
+          required: true
+components:
+  parameters:
+    PetId:
+      name: petId
+      in: path
+      required: true
+      schema: {type: integer, example: 42}
+  requestBodies:
+    Pet:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Pet'
+  schemas:
+    Pet:
+      type: object
+      properties:
+        name: {type: string, example: Rex}
+        tags:
+          type: array
+          items:
+            type: string
+            enum: [dog, cat]
+        age:
+          type: integer
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+"##;
+
+#[test]
+fn openapi_yaml_imports_like_its_json_twin() {
+    let json = parse_openapi(PETSTORE.as_bytes(), "").unwrap();
+    let yaml = parse_openapi(PETSTORE_YAML.as_bytes(), "").unwrap();
+    let order = |spec: &OpenApiSpec| {
+        spec.operations
+            .iter()
+            .map(|o| o.key.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        order(&yaml),
+        [
+            "GET /pets/{petId}",
+            "DELETE /pets/{petId}",
+            "POST /pets",
+            "PUT /pets",
+            "GET /owners/{owner-name}"
+        ]
+    );
+    assert_eq!(order(&yaml), order(&json));
+    let all = |spec: &OpenApiSpec| spec.operations.iter().map(|o| o.key.clone()).collect();
+    assert_eq!(
+        format!("{:?}", yaml.build(&all(&yaml), 5)),
+        format!("{:?}", json.build(&all(&json), 5))
+    );
+    assert_eq!(
+        format!(
+            "{:?}",
+            from_openapi(PETSTORE_YAML.as_bytes(), 5, "").unwrap()
+        ),
+        format!("{:?}", from_openapi(PETSTORE.as_bytes(), 5, "").unwrap())
+    );
+    // A byte-order mark and Swagger 2.0 in YAML.
+    let swagger = "\u{feff}swagger: '2.0'\nhost: h.example.com\nschemes: [http]\npaths:\n  /a:\n    get: {operationId: a}\n";
+    let spec = parse_openapi(swagger.as_bytes(), "").unwrap();
+    assert_eq!(
+        spec.build(&keys(&["GET /a"]), 1).requests[0].url,
+        "http://h.example.com/a"
+    );
+}
+
+#[test]
+fn openapi_yaml_keys_scalars_and_anchors() {
+    let doc = r##"openapi: 3.0.3
+servers: [{url: "http://h"}]
+x-shared:
+  limit: &limit {name: limit, in: query, required: true, example: 10}
+  body: &body
+    type: object
+    required: [count, ok, label, code]
+    properties:
+      count: {type: integer, example: 0x10}
+      ok: {type: boolean, example: yes}
+      label: {type: string, example: 007}
+      code: {example: !!str 200}
+paths:
+  /a:
+    get:
+      operationId: a
+      parameters: [*limit]
+      responses:
+        200: {description: ok}
+        true: {description: odd but valid}
+    post:
+      operationId: b
+      parameters: [*limit]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              <<: *body
+              description: merged
+"##;
+    let spec = parse_openapi(doc.as_bytes(), "").unwrap();
+    assert!(spec.warnings.is_empty(), "{:?}", spec.warnings);
+    let built = spec.build(&keys(&["GET /a", "POST /a"]), 1);
+    for r in &built.requests {
+        assert_eq!(query(r, "limit").unwrap().value, "10", "{}", r.name);
+    }
+    let (body, _) = body_of(&spec, "POST /a");
+    // YAML 1.2: `yes` is text and `007` the integer 7; `!!str` keeps text.
+    assert_eq!(
+        body,
+        serde_json::json!({"count": 16, "ok": "yes", "label": 7, "code": "200"})
+    );
+}
+
+#[test]
+fn openapi_yaml_alias_bombs_and_deep_nesting_are_refused() {
+    // Nine levels of ten aliases would be a billion values.
+    let mut bomb = String::from("openapi: 3.0.3\npaths: {}\nl0: &l0 [lol]\n");
+    for level in 1..10 {
+        let prev = level - 1;
+        bomb.push_str(&format!(
+            "l{level}: &l{level} [{}]\n",
+            vec![format!("*l{prev}"); 10].join(", ")
+        ));
+    }
+    let started = std::time::Instant::now();
+    let err = parse_openapi(bomb.as_bytes(), "").unwrap_err();
+    assert!(
+        err.contains("anchors and aliases expand to more than 64 MiB"),
+        "{err}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+
+    // Nested beyond the limit, written out and as flow collections.
+    let deep = format!(
+        "openapi: 3.0.3\npaths: {}{}\n",
+        "[".repeat(YAML_MAX_DEPTH + 1),
+        "]".repeat(YAML_MAX_DEPTH + 1)
+    );
+    let err = parse_openapi(deep.as_bytes(), "").unwrap_err();
+    assert!(err.contains("nested deeper than 128 levels"), "{err}");
+    let mut block = String::from("openapi: 3.0.3\n");
+    for level in 0..=YAML_MAX_DEPTH {
+        block.push_str(&format!("{}k{level}:\n", " ".repeat(level)));
+    }
+    assert!(
+        parse_openapi(block.as_bytes(), "")
+            .unwrap_err()
+            .contains("nested deeper")
+    );
+    // A very deep flow document stops early instead of reading on (here the
+    // YAML scanner's own flow nesting limit answers first).
+    let started = std::time::Instant::now();
+    let huge = format!("openapi: 3.0.3\npaths: {}", "[".repeat(5_000_000));
+    let err = parse_openapi(huge.as_bytes(), "").unwrap_err();
+    assert!(
+        err.contains("YAML: recursion limit exceeded (line 2"),
+        "{err}"
+    );
+    // The same as JSON: serde_json's own limit, then the YAML reader's.
+    let huge = format!("{{\"paths\": {}", "[".repeat(5_000_000));
+    assert!(
+        parse_openapi(huge.as_bytes(), "")
+            .unwrap_err()
+            .contains("recursion limit")
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn openapi_yaml_errors_are_short_and_never_show_content() {
+    let marker = "SECRET-TOKEN-abc123";
+    for doc in [
+        format!("openapi: 3.0.3\npaths:\n  /a: {{get: [{marker}\n"),
+        format!("openapi: 3.0.3\n  bad: indent {marker}\nx: 1\n"),
+        format!("openapi: 3.0.3\n---\nsecond: {marker}\n"),
+        format!("openapi: 3.0.3\nkey: *{marker}\n"),
+        format!("{{\"openapi\": \"3.0.3\", \"x\": \"{marker}\""),
+    ] {
+        let err = parse_openapi(doc.as_bytes(), "").unwrap_err();
+        assert!(
+            err.starts_with("Not a valid JSON or YAML document: "),
+            "{err}"
+        );
+        assert!(!err.contains(marker), "{err}");
+        assert!(err.len() < 160, "{err}");
+        assert!(err.contains("line"), "{err}");
+    }
+    let err = parse_openapi(b"\xff\xfeo\x00", "").unwrap_err();
+    assert!(err.contains("not UTF-8"), "{err}");
+}
+
+#[test]
+fn openapi_yaml_external_refs_load_like_json_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    write_files(
+        dir.path(),
+        &[
+            (
+                "components.yaml",
+                "parameters:\n  Limit: {name: limit, in: query, required: true, example: 5}\n\
+                 schemas:\n  Pet:\n    $ref: schemas/pet.yml\n",
+            ),
+            (
+                "schemas/pet.yml",
+                "type: object\nrequired: [name, tag]\nproperties:\n  name: {example: Rex}\n  \
+                 tag: {$ref: 'tag.json'}\n",
+            ),
+            (
+                "schemas/tag.json",
+                r#"{"type": "string", "example": "dog"}"#,
+            ),
+            (
+                "paths/pets.yaml",
+                "post:\n  operationId: createPet\n  parameters:\n    - $ref: '../components.yaml#/parameters/Limit'\n  \
+                 requestBody:\n    content:\n      application/json:\n        schema:\n          \
+                 $ref: '../components.yaml#/schemas/Pet'\n",
+            ),
+            ("broken.yaml", "a: [SECRET-FILE-CONTENT\n"),
+        ],
+    );
+    // YAML → YAML (and on to JSON).
+    let yaml = "openapi: 3.0.3\nservers: [{url: 'http://h'}]\npaths:\n  /pets:\n    $ref: paths/pets.yaml\n";
+    // JSON → YAML.
+    let json = r#"{"openapi": "3.0.3", "servers": [{"url": "http://h"}],
+      "paths": {"/pets": {"$ref": "paths/pets.yaml"}}}"#;
+    for doc in [yaml, json] {
+        let spec = parse_openapi_in(doc.as_bytes(), dir.path(), "").unwrap();
+        assert!(spec.warnings.is_empty(), "{:?}", spec.warnings);
+        assert_eq!(spec.referenced_files, 4);
+        let (pet, _) = body_of(&spec, "POST /pets");
+        assert_eq!(pet, serde_json::json!({"name": "Rex", "tag": "dog"}));
+        let built = spec.build(&keys(&["POST /pets"]), 1);
+        assert_eq!(query(&built.requests[0], "limit").unwrap().value, "5");
+    }
+    // A broken referenced file is a warning with a position, not its content.
+    let doc =
+        "openapi: 3.0.3\nservers: [{url: 'http://h'}]\npaths:\n  /a:\n    $ref: broken.yaml\n";
+    let spec = parse_openapi_in(doc.as_bytes(), dir.path(), "").unwrap();
+    let w = spec.warnings.join("\n");
+    assert!(
+        w.contains("$ref \"broken.yaml\" names a file that is not valid JSON or YAML (YAML: "),
+        "{w}"
+    );
+    assert!(w.contains("line"), "{w}");
+    assert!(!w.contains("SECRET-FILE-CONTENT"), "{w}");
 }

@@ -259,7 +259,9 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   işaretlenir: mevcut oturumda çalışır ama diğer secret'lar gibi asla kaydedilmez.
   Değeri tam olarak tek bir `{{değişken}}` referansı olan secret, bu referans
   olarak kaydedilir.
-- **OpenAPI (JSON)**, OpenAPI 3.x veya Swagger 2.0 JSON dosyasının yolunu alır.
+- **OpenAPI (JSON/YAML)**, OpenAPI 3.x veya Swagger 2.0 JSON ya da YAML
+  dosyasının (`.json`, `.yaml`, `.yml`) yolunu alır. Biçim içerikten anlaşılır:
+  `{` veya `[` ile başlayan dosya JSON, diğerleri YAML olarak okunur.
   **Preview**, her GET/POST/PUT/PATCH/DELETE işlemini belgedeki sırasıyla
   (path'ler yazıldığı sırada, bir path içindeki metotlar da yazıldığı sırada)
   metot, path, ad ve etiketleriyle listeler. Liste metinle (path, ad
@@ -268,8 +270,9 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   işlemler seçilidir ve yalnızca işaretli olanlar içe aktarılır. Pencere seçili
   işlem sayısını gösterir; seçim planı 500 isteğin üzerine çıkaracaksa Import
   devre dışı kalır.
-- Belgenin yanındaki başka JSON dosyalarına giden `$ref`'ler izlenir; örneğin
-  `common.json#/components/schemas/Pet` veya `./schemas/pet.json`. Yol,
+- Belgenin yanındaki başka JSON veya YAML dosyalarına giden `$ref`'ler
+  izlenir; örneğin `common.json#/components/schemas/Pet` veya
+  `./schemas/pet.yaml`. Yol,
   referansı içeren dosyaya göre çözülür. Yalnızca belgenin klasöründeki (ve alt
   klasörlerindeki) dosyalar okunur: dışarı çıkan `..`, mutlak yollar ve dışarıyı
   gösteren sembolik bağlantılar reddedilir. Hiçbir şey indirilmez: `http(s)`
@@ -306,7 +309,15 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   secret plan değişkenleridir; kaydedilen plan değerleri değil yalnızca
   referansları tutar. Basic Auth kimlik bilgisi ister. Cookie'deki API
   anahtarları, diğer şemalar, cookie parametreleri ve JSON olmayan gövdeler
-  önizlemede listelenir. YAML henüz desteklenmiyor; önce JSON'a çevirin.
+  önizlemede listelenir.
+- YAML, YAML 1.2 core şemasıyla okunur: `yes`/`no`/`on`/`off` metin kalır;
+  tırnaksız sayılar ve `true`/`false`/`null` türlenir; tırnaklı değerler
+  metindir. Anahtarlar yazıldıkları sırayı ve metni korur (`200:` yanıt kodu
+  `"200"` olur). Anchor, alias ve `<<` birleştirme anahtarları çalışır; core
+  dışındaki etiketler (`!!str`, `!!int`… dışındakiler) yok sayılır. JSON'da
+  karşılığı olmadığı için `.inf`/`.nan` metin kalır. Dosya başına tek belge;
+  128 seviyeden derin iç içe yapı ve 64 MiB'ı aşacak alias açılımı reddedilir.
+  Hatalar satır ve sütunla kısa bir neden gösterir, dosya içeriğini göstermez.
 
 ### SLO eşikleri
 

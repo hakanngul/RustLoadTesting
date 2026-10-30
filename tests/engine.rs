@@ -1020,3 +1020,53 @@ fn imported_multi_file_openapi_spec_runs_with_a_chosen_server() {
     assert_eq!(s.endpoints.len(), 2);
     assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
 }
+
+#[test]
+fn imported_yaml_openapi_spec_reaches_the_server() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("schemas")).unwrap();
+    std::fs::write(
+        dir.path().join("schemas/order.yaml"),
+        "type: object\nrequired: [qty, item]\nproperties:\n  qty: {type: integer, minimum: 2}\n  \
+         item: {type: string, example: book}\n",
+    )
+    .unwrap();
+    let doc = format!(
+        "openapi: 3.0.3\nservers:\n  - url: http://{}\npaths:\n  /echo:\n    get:\n      \
+         operationId: echoGet\n      responses:\n        200: {{description: ok}}\n    post:\n      \
+         operationId: echoPost\n      requestBody:\n        content:\n          application/json:\n            \
+         schema: {{$ref: 'schemas/order.yaml'}}\n  /health:\n    get: {{}}\n",
+        server.address
+    );
+    let spec = rustload::import::load_openapi(doc.as_bytes(), Some(dir.path())).unwrap();
+    assert!(spec.warnings.is_empty(), "{:?}", spec.warnings);
+    assert_eq!(spec.referenced_files, 1);
+    let all = spec.operations.iter().map(|o| o.key.clone()).collect();
+    let mut imported = spec.build(&all, 1);
+    assert_eq!(imported.requests.len(), 3);
+    // The schema from the YAML file reaches the server as the JSON body.
+    let body = imported.requests[1].body.text.clone();
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(parsed, serde_json::json!({"qty": 2, "item": "book"}));
+    imported.requests[1].assertions = Assertions {
+        json_pointer: "/request/body".into(),
+        json_expected: serde_json::Value::String(body).to_string(),
+        ..Assertions::default()
+    };
+    let mut plan = TestPlan {
+        requests: imported.requests,
+        variables: imported.variables,
+        ..TestPlan::default()
+    };
+    plan.load.users = 1;
+    plan.load.duration_secs = 1;
+    plan.load.rps_limit = 30;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    assert_eq!(s.counts.failed, 0, "{:?} {:?}", s.errors, s.logs);
+    assert_eq!(s.endpoints.len(), 3);
+    assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
+}
