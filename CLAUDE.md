@@ -66,12 +66,21 @@ bloke etme. Mevcut snapshot/persistence akışını inceleyerek geliştir.
 - **Studio 2:** alternatif çalışma tezgâhı; aynı TestPlan, seçili istek ve motoru
   paylaşır. Buradan Run, Studio 2'de kalır. Ayrı motor veya kopya plan üretme.
 - **Monitor:** canlı sonuçlar, geçmiş çalıştırmalar ve raporlama.
-- Studio 2'nin kişisel düzenleri hazırdır: widget ekle/gizle/geri getir/sil,
-  sürükleyerek sırala, Bottom/Right dock, grid genişlikleri, adlandırılmış sayfalar,
-  boş dashboard oluşturma, çoğaltma, yeniden adlandırma ve kaydetme.
-- Sekiz widget: throughput, latency, logs, active users, HTTP status distribution,
-  endpoints, live metrics ve latency distribution (tüm-run histogramından en
-  fazla 40 log-ölçekli kova). Hepsi gerçek mevcut-run verisini kullanır.
+- Üç çalışma alanının da kişisel düzenleri vardır ve aynı dashboard kodunu
+  (`dashboard::Workspace` ile parametreli) paylaşır: widget ekle/gizle/geri
+  getir/sil, sürükleyerek veya menüyle sırala, dock'lar, grid genişlikleri,
+  adlandırılmış sayfalar, çoğaltma, yeniden adlandırma ve kaydetme. Her alanın
+  sayfa seti bağımsızdır (tercih anahtarları `dashboards` = Studio 2,
+  `monitor_dashboards`, `studio_dashboards`); varsayılan sayfalar eski sabit
+  yerleşimi birebir üretir.
+- Studio: editör ve Load Configuration sabittir; yalnızca Bottom dock vardır.
+  Monitor: run listesi, başlık, uyarı, warmup ve SLO satırı sabittir; Main grid ile
+  Bottom/Right dock vardır ve widget'lar Monitor'de açık olan run'ı (canlı veya
+  geçmiş) gösterir. Boş dashboard (dashboard-only) sayfası yalnızca Studio 2'dedir.
+- On widget: throughput, requests per second (total/success/failed), latency,
+  logs, active users, HTTP status distribution, endpoints, live metrics, KPI
+  cards ve latency distribution (tüm-run histogramından en fazla 40 log-ölçekli
+  kova). Hepsi gerçek run verisini kullanır.
 - Düzenler eframe tercihlerinde saklanır; TestPlan, auth veya SQLite çalışma
   konfigürasyonuna karışmaz. **Save layout** hemen kaydeder. Eski tercihlerin
   açılmasını ve eksik/bozuk alanların normalize edilmesini koru.
