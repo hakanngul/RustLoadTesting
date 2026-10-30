@@ -376,17 +376,30 @@ impl TestPlan {
 }
 
 pub fn evaluate(assertions: &Assertions, status: u16, ms: u64, body: &[u8]) -> bool {
+    let json = if assertions.json_pointer.is_empty() {
+        None
+    } else {
+        serde_json::from_slice(body).ok()
+    };
+    evaluate_parsed(assertions, status, ms, json.as_ref())
+}
+
+/// Same as [`evaluate`] for a body that was already parsed; `None` means not JSON.
+pub fn evaluate_parsed(
+    assertions: &Assertions,
+    status: u16,
+    ms: u64,
+    json: Option<&serde_json::Value>,
+) -> bool {
     let status_ok = assertions
         .status
         .map_or((200..300).contains(&status), |expected| expected == status);
     let time_ok = assertions.max_ms.is_none_or(|max| ms <= max);
     let json_ok = assertions.json_pointer.is_empty()
-        || serde_json::from_slice::<serde_json::Value>(body)
-            .ok()
-            .is_some_and(|json| {
-                serde_json::from_str::<serde_json::Value>(&assertions.json_expected)
-                    .ok()
-                    .is_some_and(|v| json.pointer(&assertions.json_pointer) == Some(&v))
-            });
+        || json.is_some_and(|json| {
+            serde_json::from_str::<serde_json::Value>(&assertions.json_expected)
+                .ok()
+                .is_some_and(|v| json.pointer(&assertions.json_pointer) == Some(&v))
+        });
     status_ok && time_ok && json_ok
 }

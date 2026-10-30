@@ -16,6 +16,8 @@
 - RPS cards use trailing five seconds; percentile cards use whole-run histograms.
   Charts use independent one-second histogram buckets, never averaged percentiles.
 - A single global scheduled gate spaces starts; no accumulated burst credits.
+  Slots advance from the schedule, not the wake-up time, so millisecond timer
+  rounding does not lower the rate; at most 10 ms of lag is caught up.
   Redirects and automatic retries are disabled. No cookie support in v0.1.
 - Stop forbids new requests immediately; in-flight work gets up to five seconds,
   then cancellation. Natural expiry uses the same grace period. User stop means

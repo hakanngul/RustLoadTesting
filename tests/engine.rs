@@ -111,6 +111,30 @@ fn pacing_is_global_across_users() {
 }
 
 #[test]
+fn pacing_reaches_limits_above_timer_resolution() {
+    // Spacing of 2 ms is below what millisecond timer rounding tolerates when the
+    // gate drifts; the schedule must still deliver the configured rate, no more.
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = TestPlan::default();
+    plan.requests[0].url = format!("http://{}/health", server.address);
+    plan.load.users = 100;
+    plan.load.duration_secs = 2;
+    plan.load.rps_limit = 500;
+    plan.load.think_ms = 0;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    assert!(
+        (900..=1005).contains(&s.counts.started),
+        "starts {}",
+        s.counts.started
+    );
+    assert_eq!(s.counts.failed, 0);
+    server.stop.cancel();
+}
+
+#[test]
 fn five_methods_headers_query_json_and_basic_auth_reach_the_server() {
     let rt = runtime();
     let server = rt.block_on(fixture::spawn(0)).unwrap();
