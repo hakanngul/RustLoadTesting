@@ -52,6 +52,9 @@ pub enum Profile {
     RampUp,
     /// Piecewise-linear user count over consecutive stages.
     Stages,
+    /// Open model: scenario iterations start at a fixed rate from a pool of at
+    /// most `users` virtual users, independent of response times.
+    ArrivalRate,
 }
 
 /// Linear move from the previous user count (0 at the start) to `target_users`
@@ -98,6 +101,9 @@ pub struct LoadConfig {
     pub warmup: Warmup,
     /// Used when `profile` is `Stages`; then `users` and `duration_secs` are derived.
     pub stages: Vec<Stage>,
+    /// Iterations started per second when `profile` is `ArrivalRate`; `users` is
+    /// then the maximum VU pool.
+    pub arrival_rate: f64,
 }
 impl Default for LoadConfig {
     fn default() -> Self {
@@ -112,6 +118,7 @@ impl Default for LoadConfig {
             body_limit_bytes: 10 * 1024 * 1024,
             warmup: Warmup::None,
             stages: vec![],
+            arrival_rate: 10.0,
         }
     }
 }
@@ -142,7 +149,8 @@ impl LoadConfig {
         let users = self.users as f64;
         let total = self.duration_secs as f64;
         match self.profile {
-            Profile::Constant => vec![(0.0, users), (total, users)],
+            // Arrival rate: the pool size bounds concurrency; starts follow the rate.
+            Profile::Constant | Profile::ArrivalRate => vec![(0.0, users), (total, users)],
             Profile::RampUp => vec![(0.0, 0.0), (self.ramp_secs as f64, users), (total, users)],
             Profile::Stages => {
                 let mut points = vec![(0.0, 0.0)];
@@ -155,11 +163,23 @@ impl LoadConfig {
             }
         }
     }
+    /// Load high enough to warrant a target/capacity warning before running.
+    pub fn is_elevated(&self) -> bool {
+        self.max_users() > 100
+            || match self.profile {
+                Profile::ArrivalRate => self.arrival_rate > 100.0,
+                _ => self.rps_limit > 100,
+            }
+    }
     /// Short profile description, e.g. `ramp-up 10s` or `stages 60s to 50, 300s to 200`.
     pub fn profile_label(&self) -> String {
         match self.profile {
             Profile::Constant => "constant".into(),
             Profile::RampUp => format!("ramp-up {}s", self.ramp_secs),
+            Profile::ArrivalRate => format!(
+                "arrival rate {}/s, max {} VUs",
+                self.arrival_rate, self.users
+            ),
             Profile::Stages => format!(
                 "stages {}",
                 self.stages
@@ -476,6 +496,11 @@ impl TestPlan {
             {
                 return Err("Each stage needs at least 1s and at most 10,000 users".into());
             }
+        }
+        if c.profile == Profile::ArrivalRate
+            && !(c.arrival_rate.is_finite() && (0.01..=100_000.0).contains(&c.arrival_rate))
+        {
+            return Err("Arrival rate must be 0.01–100,000 iterations/s".into());
         }
         if !(1..=10_000).contains(&c.max_users())
             || !(1..=86_400).contains(&c.total_secs())

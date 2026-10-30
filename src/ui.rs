@@ -730,8 +730,12 @@ impl RustLoadApp {
             }
             ui.separator();
             ui.label(
-                RichText::new("Closed-loop users. RPS caps starts across all users.")
-                    .color(p.muted),
+                RichText::new(if self.plan.load.profile == Profile::ArrivalRate {
+                    "Open model: iterations start at the arrival rate; busy VUs drop them."
+                } else {
+                    "Closed-loop users. RPS caps starts across all users."
+                })
+                .color(p.muted),
             );
             ui.checkbox(
                 &mut self.acknowledged,
@@ -747,7 +751,7 @@ impl RustLoadApp {
             for origin in origins {
                 ui.label(RichText::new(origin).small().color(p.muted));
             }
-            if self.plan.load.users > 100 || self.plan.load.rps_limit > 100 {
+            if self.plan.load.is_elevated() {
                 ui.colored_label(
                     p.warning,
                     "Elevated load: verify target and local capacity.",
@@ -1294,6 +1298,23 @@ fn status_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
             ))
             .small(),
         );
+        if let Some(rate) = s.arrival_rate {
+            ui.label(
+                RichText::new(format!(
+                    "Arrival rate {rate}/s · Dropped iterations {}",
+                    s.counts.dropped_iterations
+                ))
+                .small()
+                .color(if s.counts.dropped_iterations > 0 {
+                    p.warning
+                } else {
+                    p.muted
+                }),
+            )
+            .on_hover_text(
+                "Iterations not started because every VU was busy. Raise Max VUs if this grows.",
+            );
+        }
     });
 }
 fn endpoint_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
@@ -1464,7 +1485,7 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
         .spacing([8.0, 10.0])
         .show(ui, |ui| {
             let fixed = c.profile != Profile::Stages;
-            ui.label("Virtual users");
+            ui.label(users_label(c));
             ui.add_enabled(fixed, egui::DragValue::new(&mut c.users).range(1..=10_000));
             ui.end_row();
             ui.label("Total duration");
@@ -1478,6 +1499,7 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
             ui.label("Profile");
             profile_combo(ui, c, "profile");
             ui.end_row();
+            arrival_rate_row(ui, c);
             if c.profile == Profile::RampUp {
                 ui.label("Ramp-up");
                 ui.add(
@@ -1488,10 +1510,16 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
                 ui.end_row();
             }
             ui.label("Global RPS cap");
-            ui.add(egui::DragValue::new(&mut c.rps_limit).range(1..=100_000));
+            closed_model_only(
+                ui,
+                c.profile == Profile::ArrivalRate,
+                egui::DragValue::new(&mut c.rps_limit).range(1..=100_000),
+            );
             ui.end_row();
             ui.label("Think / iteration");
-            ui.add(
+            closed_model_only(
+                ui,
+                c.profile == Profile::ArrivalRate,
                 egui::DragValue::new(&mut c.think_ms)
                     .range(0..=300_000)
                     .suffix(" ms"),
@@ -1605,17 +1633,56 @@ fn threshold_editor(
         "Thresholds give each run a Passed/Failed verdict and never stop it. Latency and error rate are upper bounds; throughput is a lower bound measured as completed requests over the whole run.",
     );
 }
+/// Label of the user-count field: the VU pool cap in the open model.
+fn users_label(c: &LoadConfig) -> &'static str {
+    if c.profile == Profile::ArrivalRate {
+        "Max VUs"
+    } else {
+        "Virtual users"
+    }
+}
+/// Arrival-rate grid row (open model only), shared by both load editors.
+fn arrival_rate_row(ui: &mut egui::Ui, c: &mut LoadConfig) {
+    if c.profile != Profile::ArrivalRate {
+        return;
+    }
+    ui.label("Arrival rate");
+    ui.add(
+        egui::DragValue::new(&mut c.arrival_rate)
+            .range(0.01..=100_000.0)
+            .speed(0.5)
+            .max_decimals(2)
+            .suffix(" it/s"),
+    )
+    .on_hover_text(
+        "Scenario iterations started per second, regardless of response time. When all Max VUs are busy the iteration is dropped and counted.",
+    );
+    ui.end_row();
+}
+/// A setting that only applies to closed-model profiles; disabled with an
+/// explanation for the arrival-rate profile.
+fn closed_model_only(ui: &mut egui::Ui, open: bool, widget: impl egui::Widget) {
+    ui.add_enabled(!open, widget).on_disabled_hover_text(
+        "Not used by the arrival-rate profile: the arrival schedule paces iteration starts.",
+    );
+}
 /// Load profile selector shared by the Studio and Studio 2 load editors.
 fn profile_combo(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
     let label = |p: &Profile| match p {
         Profile::Constant => "Constant Users",
         Profile::RampUp => "Ramp-up Users",
         Profile::Stages => "Stages",
+        Profile::ArrivalRate => "Arrival Rate (open)",
     };
     egui::ComboBox::from_id_salt(id)
         .selected_text(label(&c.profile))
         .show_ui(ui, |ui| {
-            for profile in [Profile::Constant, Profile::RampUp, Profile::Stages] {
+            for profile in [
+                Profile::Constant,
+                Profile::RampUp,
+                Profile::Stages,
+                Profile::ArrivalRate,
+            ] {
                 let text = label(&profile);
                 ui.selectable_value(&mut c.profile, profile, text);
             }

@@ -281,8 +281,15 @@ dizelerini içermez. Yanıt gövdeleri loglara yazılmaz.
 
 RustLoad kapalı döngü modeliyle çalışır: her sanal kullanıcı senaryoyu sırayla
 tamamlar, ardından bir sonraki tekrar için ayarlanan süreyi bekler. Toplam test
-süresine kullanıcıların kademeli artış süresi de dahildir. Kullanıcılardan
-bağımsız, açık döngülü bir istek varış hızı üretilmez.
+süresine kullanıcıların kademeli artış süresi de dahildir.
+
+**Arrival Rate (open)** profili açık modeldir: senaryo tekrarları, hedefin ne
+kadar hızlı yanıt verdiğinden bağımsız olarak sabit bir hızda (tekrar/saniye)
+başlar; yavaşlayan bir hedef uygulanan yükü düşürmez. Her tekrar en fazla
+**Max VUs** kadar sanal kullanıcıdan oluşan havuzdaki boş bir kullanıcıda
+çalışır. Tüm kullanıcılar meşgulse tekrar başlatılmaz ve **dropped iteration**
+olarak sayılır; bunlar istek olmadığından hata oranına girmez. Bu modda ortak RPS
+sınırı ve senaryo arası bekleme uygulanmaz.
 
 **Stages** profili kullanıcı sayısını en fazla 20 aşamayla şekillendirir; her
 aşama bir önceki sayıdan (başlangıçta 0) hedefe doğrusal geçer. Aşamaları
@@ -303,7 +310,8 @@ Sayı düştüğünde kullanıcılar mevcut tekrarlarını bitirip durur.
 | Çalıştırma karşılaştırması | Throughput ve veri, her çalıştırmanın tamamında tamamlanan istek ve byte'ların geçen süreye bölümüdür; gecikme tüm çalıştırmanın histogramını kullanır; veri hızı bilgi amaçlıdır ve sonucu etkilemez |
 | SLO kararı | Gecikme eşikleri tüm çalıştırmanın histogramını, hata oranı tamamlanan istekleri kullanır; throughput, beş saniyelik RPS kartı değil, tamamlanan isteklerin tüm süreye bölümüdür. Ölçülen değer hedefe eşitse eşik karşılanmış sayılır |
 | Data / sec kartı | Aynı pencerede saniyedeki yanıt gövdesi byte'ı; yalnızca tamamen okunan yanıtlar sayılır, header'lar dahil değildir |
-| Ortak RPS sınırı | Tüm kullanıcıların HTTP istek başlangıçlarını zamanlar; zamanlayıcı gecikmesinin en fazla 10 ms'lik kısmı telafi edilir, boşta geçen süre toplu istek başlatma hakkı biriktirmez |
+| Düşürülen tekrarlar | Yalnızca Arrival Rate: tüm Max VUs meşgul olduğu için başlatılamayan planlı tekrarlar. Durum panelinde ve HTML raporunda görünür; karşılaştırma, tekrar düşüren çalıştırmalar için uyarı verir |
+| Ortak RPS sınırı | Yalnızca kapalı model profilleri. Tüm kullanıcıların HTTP istek başlangıçlarını zamanlar; zamanlayıcı gecikmesinin en fazla 10 ms'lik kısmı telafi edilir, boşta geçen süre toplu istek başlatma hakkı biriktirmez |
 
 P50/P90/P95/P99 için HDR histogramları kullanılır. Değerler mikrosaniye olarak
 kaydedilir, milisaniye olarak gösterilir. Örnek bulunmayan ölçümlerde yer tutucu
