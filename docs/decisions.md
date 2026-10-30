@@ -34,7 +34,16 @@
   Params, URL credentials Basic Auth; connection headers, Content-Length and
   Accept-Encoding are dropped (responses are not decompressed). Credential
   headers stay session-only secrets. Unsupported options are listed, not
-  guessed. OpenAPI import is a later step.
+  guessed.
+- OpenAPI import reads JSON only (OpenAPI 3.x, Swagger 2.0) with serde_json, so
+  no new dependency; YAML would need one and waits for a user decision. Local
+  `$ref`s are followed (depth 16). Operations come in path order (serde_json
+  maps are sorted). Values come only from the document's examples/defaults,
+  never invented; missing ones are left empty and listed. Path parameters
+  become plan variables (names sanitized to `[A-Za-z0-9_]`), so the URL keeps a
+  fixed scheme and host. Bearer/OAuth becomes `{{access_token}}`, which the
+  secret-safe serializer keeps as a reference while its value stays session-only.
+  Existing plan variables of the same name are never overwritten.
 - Warmup is None, Duration{secs} or Requests{count}. A request is classified by
   its start: started during warmup means excluded from every result metric
   (counts, histograms, statuses, endpoints, bytes) and counted in separate

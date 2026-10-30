@@ -1,22 +1,33 @@
-//! Import dialog: browser "Copy as cURL" text or a HAR file into the plan.
+//! Import dialog: browser "Copy as cURL" text, a HAR file or an OpenAPI
+//! document into the plan.
 use super::*;
-use crate::import::{HAR_SIZE_LIMIT, IMPORT_LIMIT, Imported, from_curl, from_har};
+use crate::import::{HAR_SIZE_LIMIT, IMPORT_LIMIT, Imported, from_curl, from_har, from_openapi};
+
+#[derive(Clone, Copy, PartialEq)]
+enum Source {
+    Curl,
+    Har,
+    OpenApi,
+}
 
 pub(super) struct ImportDialog {
-    har: bool,
+    source: Source,
     curl: String,
     path: String,
     api_only: bool,
+    /// OpenAPI only: overrides the document's server URL when set.
+    base_url: String,
     replace: bool,
     preview: Option<Result<Imported, String>>,
 }
 impl Default for ImportDialog {
     fn default() -> Self {
         Self {
-            har: false,
+            source: Source::Curl,
             curl: String::new(),
             path: String::new(),
             api_only: true,
+            base_url: String::new(),
             replace: false,
             preview: None,
         }
@@ -24,16 +35,20 @@ impl Default for ImportDialog {
 }
 impl ImportDialog {
     fn parse(&self, first_id: u64) -> Result<Imported, String> {
-        if !self.har {
+        if self.source == Source::Curl {
             return from_curl(&self.curl, first_id);
         }
         let path = self.path.trim();
         let meta = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
         if meta.len() > HAR_SIZE_LIMIT {
-            return Err("HAR file exceeds 50 MiB".into());
+            return Err("File exceeds 50 MiB".into());
         }
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        from_har(&bytes, first_id, self.api_only)
+        if self.source == Source::Har {
+            from_har(&bytes, first_id, self.api_only)
+        } else {
+            from_openapi(&bytes, first_id, &self.base_url)
+        }
     }
 }
 
@@ -55,21 +70,44 @@ impl RustLoadApp {
             .default_width(620.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(!dialog.har, "Copy as cURL").clicked() {
-                        dialog.har = false;
-                        dialog.preview = None;
-                    }
-                    if ui.selectable_label(dialog.har, "HAR file").clicked() {
-                        dialog.har = true;
-                        dialog.preview = None;
+                    for (source, label) in [
+                        (Source::Curl, "Copy as cURL"),
+                        (Source::Har, "HAR file"),
+                        (Source::OpenApi, "OpenAPI (JSON)"),
+                    ] {
+                        if ui.selectable_label(dialog.source == source, label).clicked() {
+                            dialog.source = source;
+                            dialog.preview = None;
+                        }
                     }
                 });
                 ui.separator();
-                let before = (dialog.curl.clone(), dialog.path.clone(), dialog.api_only);
-                if dialog.har {
+                let before = (
+                    dialog.curl.clone(),
+                    dialog.path.clone(),
+                    dialog.api_only,
+                    dialog.base_url.clone(),
+                );
+                if dialog.source == Source::Har {
                     ui.label("HAR file path (DevTools > Network > Save all as HAR)");
                     ui.add(egui::TextEdit::singleline(&mut dialog.path).desired_width(f32::INFINITY));
                     ui.checkbox(&mut dialog.api_only, "Only XHR/fetch requests (skip pages, scripts, styles, images)");
+                } else if dialog.source == Source::OpenApi {
+                    ui.label("OpenAPI 3.x or Swagger 2.0 JSON file path");
+                    ui.add(egui::TextEdit::singleline(&mut dialog.path).desired_width(f32::INFINITY));
+                    ui.label("Base URL (optional; replaces the document's server URL)");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.base_url)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("e.g. https://staging.example.com"),
+                    );
+                    ui.label(
+                        RichText::new(
+                            "One request per GET/POST/PUT/PATCH/DELETE operation. Path parameters become {{variables}}; required query/header parameters and JSON bodies use the document's examples.",
+                        )
+                        .small()
+                        .color(p.muted),
+                    );
                 } else {
                     ui.label("Paste one or more commands from DevTools > Copy as cURL (bash)");
                     egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
@@ -82,7 +120,14 @@ impl RustLoadApp {
                         );
                     });
                 }
-                if before != (dialog.curl.clone(), dialog.path.clone(), dialog.api_only) {
+                if before
+                    != (
+                        dialog.curl.clone(),
+                        dialog.path.clone(),
+                        dialog.api_only,
+                        dialog.base_url.clone(),
+                    )
+                {
                     dialog.preview = None;
                 }
                 ui.horizontal(|ui| {
@@ -167,6 +212,17 @@ impl RustLoadApp {
         } else {
             self.selected = self.plan.requests.len();
             self.plan.requests.extend(imported.requests);
+        }
+        // Path parameters and credentials the requests refer to; existing values win.
+        let mut added = Vec::new();
+        for v in imported.variables {
+            if !self.plan.variables.iter().any(|f| f.name == v.name) {
+                added.push(v.name.clone());
+                self.plan.variables.push(v);
+            }
+        }
+        if !added.is_empty() {
+            note.push_str(&format!(" Added variables: {}.", added.join(", ")));
         }
         self.plan_settings = false;
         self.dirty = true;

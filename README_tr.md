@@ -224,7 +224,7 @@ etkinleştirilir; aynı sütun adı birden fazla kez bulunamaz. Göreli CSV yoll
 kaydedilmiş planın bulunduğu dizine göre çözülür. Plan henüz kaydedilmediyse
 uygulama işleminin çalışma dizini esas alınır.
 
-### cURL veya HAR'dan içe aktarma
+### cURL, HAR veya OpenAPI'den içe aktarma
 
 Araç çubuğundaki **Import…**, istekleri tarayıcınızdan oluşturur. DevTools'ta
 *Copy as cURL (bash)* (veya *Copy all as cURL*) ile kopyaladığınız bir ya da
@@ -246,6 +246,17 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   ve 500 istek.
 - Authorization, Cookie ve diğer kimlik bilgisi değerleri secret olarak
   işaretlenir: mevcut oturumda çalışır ama diğer secret'lar gibi asla kaydedilmez.
+- **OpenAPI (JSON)**, OpenAPI 3.x veya Swagger 2.0 JSON dosyasının yolunu alır ve
+  her GET/POST/PUT/PATCH/DELETE işlemi için bir istek oluşturur (path'e göre
+  sıralı). Base URL ilk server'dan (değişkenler varsayılan değerleriyle) alınır;
+  alana bir adres girerseniz o kullanılır, böylece spesifikasyonu yerel veya
+  staging hedefe yöneltebilirsiniz. Path parametreleri, örnek değerleriyle plana
+  eklenen `{{değişkenler}}` olur; zorunlu query/header parametreleri ve JSON
+  gövdeler `example`, `examples`, `default`, `enum` veya şemadaki alan
+  örneklerinden doldurulur. Bearer ve OAuth güvenliği, çalıştırmadan önce
+  doldurmanız gereken secret `{{access_token}}` değişkenine dönüşür; Basic Auth
+  kimlik bilgisi ister; diğer şemalar, cookie parametreleri ve JSON olmayan
+  gövdeler önizlemede listelenir. YAML henüz desteklenmiyor; önce JSON'a çevirin.
 
 ### SLO eşikleri
 

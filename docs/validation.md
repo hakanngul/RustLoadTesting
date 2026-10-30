@@ -1,5 +1,34 @@
 # Validation evidence
 
+## OpenAPI import update
+
+**Import…** gains an **OpenAPI (JSON)** tab for OpenAPI 3.x and Swagger 2.0
+documents, with an optional base URL override.
+
+- `openapi3_operations_become_requests`: server variables, path-level `$ref`
+  parameters, path variable with example (`petId=42`) and without (warned,
+  sanitized `owner_name`), required query default, optional query skipped,
+  required header example, cookie parameter and HEAD operation skipped with
+  warnings, `$ref` request body built from property examples and `enum`,
+  non-JSON body left empty, global bearer security and an operation that clears
+  it with `security: []`. The plan fails validation until `access_token` has a
+  value, then passes.
+- `swagger2_and_base_url_rules`: host/basePath/schemes, body parameter example,
+  Basic security, base URL override; relative server without override, base
+  URLs with credentials/query/non-HTTP scheme, YAML and non-OpenAPI JSON are
+  rejected with explanations.
+- `imported_openapi_requests_reach_the_server`: an imported document runs
+  against the localhost fixture with zero failures; the path variable, required
+  query, header and JSON body arrive as written.
+- Native Linux/Xvfb: imported a three-operation document with base URL
+  `http://127.0.0.1:8080` (Replace). The preview listed 3 requests and the bearer
+  warning; the plan gained `endpoint=echo` and secret `access_token`. Run Test
+  first stopped with "Re-enter secret value: access_token"; after entering a
+  value a 3 s run completed with 60 requests and 0 errors.
+
+Suite: **65 passed** (6 compare, 20 core/report, 10 dashboard-layout, 21 engine,
+8 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## Failure reasons update
 
 Measured failures are grouped by request and a sanitized reason; logs use the
