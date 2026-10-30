@@ -168,6 +168,12 @@ fn offline_reports_escape_html_and_csv_formulas() {
             name: "=1+2".into(),
             ..Endpoint::default()
         }],
+        // Reasons can include plan text such as a JSON pointer.
+        errors: vec![ErrorGroup {
+            reason: "JSON at /<img> did not match".into(),
+            count: 3,
+            ..ErrorGroup::default()
+        }],
         ..Snapshot::default()
     };
     report::export(
@@ -182,6 +188,9 @@ fn offline_reports_escape_html_and_csv_formulas() {
     assert!(!html.contains("<script>"));
     assert!(html.contains("&lt;script&gt;"));
     assert!(html.contains("Cancelled"));
+    assert!(html.contains("<h2>Failure reasons</h2>"));
+    assert!(html.contains("JSON at /&lt;img&gt; did not match"));
+    assert!(!html.contains("<img>"));
     report::export(
         &dir.path().join("report.csv"),
         "CSV",
@@ -581,4 +590,39 @@ fn latency_distribution_covers_every_sample_in_log_buckets() {
     let one = distribution(&single);
     assert_eq!(one.len(), 1);
     assert_eq!(one[0].count, 7);
+}
+
+#[test]
+fn error_groups_are_bounded_and_ordered() {
+    let mut m = Accumulator::default();
+    m.record_error(1, "HTTP 500, expected 2xx".into(), 1.0);
+    m.record_error(1, "HTTP 500, expected 2xx".into(), 2.5);
+    m.record_error(2, "HTTP 500, expected 2xx".into(), 3.0);
+    let s = m.snapshot(4.0);
+    assert_eq!(
+        s.errors.len(),
+        2,
+        "same reason on another request is its own group"
+    );
+    assert_eq!(
+        (
+            s.errors[0].request_id,
+            s.errors[0].count,
+            s.errors[0].first_at,
+            s.errors[0].last_at
+        ),
+        (1, 2, 1.0, 2.5),
+        "most frequent first"
+    );
+    for i in 0..ERROR_GROUP_LIMIT as u64 {
+        m.record_error(10 + i, "Timeout".into(), 5.0);
+    }
+    // Known groups keep counting at the limit; only new reasons overflow.
+    m.record_error(1, "HTTP 500, expected 2xx".into(), 6.0);
+    let s = m.snapshot(7.0);
+    assert_eq!(s.errors.len(), ERROR_GROUP_LIMIT);
+    assert_eq!(s.errors_overflow, 2);
+    assert_eq!(s.errors[0].count, 3);
+    assert_eq!(clip("abcdef", 3), "abc…");
+    assert_eq!(clip("abc", 3), "abc");
 }

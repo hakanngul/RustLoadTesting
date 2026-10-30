@@ -1,5 +1,31 @@
 # Validation evidence
 
+## Failure reasons update
+
+Measured failures are grouped by request and a sanitized reason; logs use the
+same reason. The status panel (Monitor and the Studio 2 status widget) lists the
+five largest groups; HTML and JSON reports include them all.
+
+- `failures_are_grouped_by_sanitized_reason` (real localhost traffic): `/status/500`
+  gives "HTTP 500, expected 2xx"; an expected 201 gives "HTTP 200, expected 201";
+  a JSON mismatch, an empty extraction, a timeout, a body over the cap, a server
+  that closes without answering ("Request failed before a response") and a port
+  with no listener ("Connection refused") each yield one group. Group counts
+  equal the failed count, and no reason contains a host or URL. The refused
+  run's ERROR log line ends with the same reason.
+- `error_groups_are_bounded_and_ordered`: same reason on two requests gives two
+  groups, most frequent first with first/last times; at 100 groups existing ones
+  keep counting and new reasons go to the overflow counter.
+- `offline_reports_escape_html_and_csv_formulas` now also checks the escaped
+  Failure reasons table.
+- Native Linux/Xvfb: a 4 s run against `/status/500` showed "80 · HTTP Request ·
+  HTTP 500, expected 2xx" in Dark and Light, and log lines read "Request #1 ·
+  HTTP 500, expected 2xx · 1.2 ms" (the first attempt printed "HTTP 500" twice
+  and truncated the request column; both fixed).
+
+Suite: **62 passed** (6 compare, 20 core/report, 10 dashboard-layout, 20 engine,
+6 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## Latency distribution widget update
 
 Studio 2 gains an eighth widget, **Latency Distribution**: the whole-run

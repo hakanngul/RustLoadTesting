@@ -117,6 +117,22 @@ pub struct Endpoint {
     pub counts: Counts,
     pub latency: Latency,
 }
+/// Measured failures of one request that share a sanitized reason. Reasons come
+/// from the plan, the status code and fixed transport labels, never from
+/// response content or transport error text (which can contain URLs).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ErrorGroup {
+    pub request_id: u64,
+    pub reason: String,
+    pub count: u64,
+    /// Elapsed seconds of the first and latest failure.
+    pub first_at: f64,
+    pub last_at: f64,
+}
+/// Distinct (request, reason) groups kept; later new reasons are only counted.
+pub const ERROR_GROUP_LIMIT: usize = 100;
+
 /// One bar of the latency distribution: responses with latency in `from_ms..to_ms`.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -198,6 +214,11 @@ pub struct Snapshot {
     pub arrival_rate: Option<f64>,
     /// Whole-run response latency distribution (measured window only).
     pub latency_distribution: Vec<LatencyBucket>,
+    /// Measured failures grouped by request and reason, most frequent first.
+    /// Their counts plus `errors_overflow` equal `counts.failed`.
+    pub errors: Vec<ErrorGroup>,
+    /// Failures whose reason arrived after `ERROR_GROUP_LIMIT` groups existed.
+    pub errors_overflow: u64,
 }
 impl Snapshot {
     /// Length of the measured window: elapsed time after warmup.
@@ -360,6 +381,8 @@ pub struct Accumulator {
     pub warmup: Counts,
     /// Elapsed seconds when the first measured request started.
     pub warmup_ended_at: Option<f64>,
+    pub errors: BTreeMap<(u64, String), ErrorGroup>,
+    pub errors_overflow: u64,
 }
 impl Default for Accumulator {
     fn default() -> Self {
@@ -380,10 +403,33 @@ impl Default for Accumulator {
             last_elapsed: 0.0,
             warmup: Counts::default(),
             warmup_ended_at: None,
+            errors: BTreeMap::new(),
+            errors_overflow: 0,
         }
     }
 }
 impl Accumulator {
+    /// Groups a measured failure by request and sanitized reason.
+    pub fn record_error(&mut self, request_id: u64, reason: String, at: f64) {
+        let key = (request_id, reason);
+        if let Some(group) = self.errors.get_mut(&key) {
+            group.count += 1;
+            group.last_at = at;
+        } else if self.errors.len() < ERROR_GROUP_LIMIT {
+            self.errors.insert(
+                key.clone(),
+                ErrorGroup {
+                    request_id,
+                    reason: key.1,
+                    count: 1,
+                    first_at: at,
+                    last_at: at,
+                },
+            );
+        } else {
+            self.errors_overflow += 1;
+        }
+    }
     pub fn log(&mut self, elapsed: f64, level: &str, message: String) {
         if self.logs.len() == LOG_LIMIT {
             self.logs.pop_front();
@@ -470,6 +516,12 @@ impl Accumulator {
             series: self.series.clone(),
             logs: self.logs.clone(),
             warmup_counts: self.warmup.clone(),
+            errors: {
+                let mut errors: Vec<_> = self.errors.values().cloned().collect();
+                errors.sort_by_key(|g| std::cmp::Reverse(g.count));
+                errors
+            },
+            errors_overflow: self.errors_overflow,
             ..Snapshot::default()
         }
     }

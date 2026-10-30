@@ -677,3 +677,64 @@ fn arrival_rate_drops_iterations_when_every_vu_is_busy() {
     // Dropped iterations are not requests, so they never count as errors.
     assert_eq!(s.counts.error_rate(), 0.0);
 }
+
+#[test]
+fn failures_are_grouped_by_sanitized_reason() {
+    let reasons = |s: &Snapshot| -> Vec<String> {
+        // Every measured failure is in exactly one group.
+        assert_eq!(
+            s.errors.iter().map(|g| g.count).sum::<u64>() + s.errors_overflow,
+            s.counts.failed
+        );
+        for g in &s.errors {
+            assert!(
+                !g.reason.contains("127.0.0.1") && !g.reason.contains("http"),
+                "no URL or host in reasons: {}",
+                g.reason
+            );
+            assert!(g.first_at <= g.last_at);
+        }
+        s.errors.iter().map(|g| g.reason.clone()).collect()
+    };
+    let status = run_endpoint("/status/500", |_| {});
+    assert_eq!(reasons(&status), ["HTTP 500, expected 2xx"]);
+    assert_eq!(status.errors[0].request_id, status.endpoints[0].id);
+    let expected = run_endpoint("/health", |p| p.requests[0].assertions.status = Some(201));
+    assert_eq!(reasons(&expected), ["HTTP 200, expected 201"]);
+    let json = run_endpoint("/health", |p| {
+        p.requests[0].assertions.json_pointer = "/status".into();
+        p.requests[0].assertions.json_expected = "\"down\"".into();
+    });
+    assert_eq!(reasons(&json), ["JSON at /status did not match"]);
+    let extraction = run_endpoint("/malformed", |p| {
+        p.requests[0].extractors.push(Extractor {
+            variable: "token".into(),
+            pointer: "/field".into(),
+        })
+    });
+    assert_eq!(reasons(&extraction), ["Extraction found nothing at /field"]);
+    let timeout = run_endpoint("/slow", |p| p.load.timeout_ms = 25);
+    assert_eq!(reasons(&timeout), ["Timeout"]);
+    let large = run_endpoint("/large", |p| p.load.body_limit_bytes = 1024);
+    assert_eq!(reasons(&large), ["ResponseTooLarge"]);
+    let disconnected = run_endpoint("/disconnect", |_| {});
+    // The server closes without answering: no HTTP response, no I/O error kind.
+    assert_eq!(reasons(&disconnected), ["Request failed before a response"]);
+    // A port with no listener refuses the connection.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let refused = run_endpoint("/health", |p| {
+        p.requests[0].url = format!("http://127.0.0.1:{port}/health")
+    });
+    assert_eq!(reasons(&refused), ["Connection refused"]);
+    // Logs carry the same reason instead of a generic label.
+    assert!(
+        refused
+            .logs
+            .iter()
+            .any(|l| l.level == "ERROR" && l.message.ends_with("Connection refused"))
+    );
+}
