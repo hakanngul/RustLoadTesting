@@ -260,16 +260,34 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   Değeri tam olarak tek bir `{{değişken}}` referansı olan secret, bu referans
   olarak kaydedilir.
 - **OpenAPI (JSON)**, OpenAPI 3.x veya Swagger 2.0 JSON dosyasının yolunu alır.
-  **Preview**, her GET/POST/PUT/PATCH/DELETE işlemini (önce path, sonra metot
-  sırasıyla) metot, path, ad ve etiketleriyle listeler. Liste metinle (path, ad
+  **Preview**, her GET/POST/PUT/PATCH/DELETE işlemini belgedeki sırasıyla
+  (path'ler yazıldığı sırada, bir path içindeki metotlar da yazıldığı sırada)
+  metot, path, ad ve etiketleriyle listeler. Liste metinle (path, ad
   veya operationId), metotla veya etiketle filtrelenebilir; **Select all** ve
   **None** yalnızca filtrenin gösterdiği işlemlere uygulanır. Başlangıçta tüm
   işlemler seçilidir ve yalnızca işaretli olanlar içe aktarılır. Pencere seçili
   işlem sayısını gösterir; seçim planı 500 isteğin üzerine çıkaracaksa Import
   devre dışı kalır.
-- Base URL ilk server'dan (değişkenler varsayılan değerleriyle) alınır; alana
-  bir adres girerseniz o kullanılır, böylece spesifikasyonu yerel veya staging
-  hedefe yöneltebilirsiniz. Path parametreleri, örnek değerleriyle plana eklenen
+- Belgenin yanındaki başka JSON dosyalarına giden `$ref`'ler izlenir; örneğin
+  `common.json#/components/schemas/Pet` veya `./schemas/pet.json`. Yol,
+  referansı içeren dosyaya göre çözülür. Yalnızca belgenin klasöründeki (ve alt
+  klasörlerindeki) dosyalar okunur: dışarı çıkan `..`, mutlak yollar ve dışarıyı
+  gösteren sembolik bağlantılar reddedilir. Hiçbir şey indirilmez: `http(s)`
+  referansları listelenir ve çözümlenmeden bırakılır. Dosya başına en fazla
+  10 MiB ve toplam en fazla 50 dosya okunur; her dosya bir kez okunur, böylece
+  birbirine referans veren dosyalar döngüye girmez. Çözümlenemeyen referanslar
+  önizlemede adıyla (dosya içeriği olmadan) listelenir; önizleme kaç dosyanın
+  okunduğunu da gösterir.
+- Belgede birden fazla server ya da `enum` içeren server değişkenleri varsa
+  önizleme server ve bu değişkenlerin her biri için bir açılır liste sunar;
+  ilk server ve varsayılan değerler seçili gelir. Birden fazla `schemes`
+  değeri olan Swagger 2.0 belgesi şema (http/https) seçimi sunar. Seçimi
+  değiştirmek dosyaları yeniden okumadan istek URL'lerini günceller; önizleme
+  isteklerin nereye gideceğini gösterir. **Base URL** alanına bir adres
+  girerseniz seçimin yerine o kullanılır, böylece spesifikasyonu başka bir
+  yerel veya staging hedefe yöneltebilirsiniz. Her durumda URL kimlik bilgisi
+  ve query içermeyen, host'u olan mutlak bir http(s) adresi olmalıdır. Path
+  parametreleri, örnek değerleriyle plana eklenen
   `{{değişkenler}}` olur; zorunlu query/header parametreleri `example`,
   `examples`, `default` veya `enum` değerlerini kullanır.
 - JSON gövdeler belgedeki değerleri (`example`, `examples`, `default`, `enum`,

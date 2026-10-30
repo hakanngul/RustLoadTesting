@@ -119,6 +119,41 @@ fn assertions_use_explicit_status_and_json_pointer() {
 }
 
 #[test]
+fn json_assertions_compare_objects_regardless_of_key_order() {
+    // serde_json keeps document key order (preserve_order); object equality
+    // must still ignore it while array order still counts.
+    let a = Assertions {
+        json_pointer: "/user".into(),
+        json_expected: r#"{"name": "a", "id": 1, "tags": ["x", "y"]}"#.into(),
+        ..Assertions::default()
+    };
+    assert!(evaluate(
+        &a,
+        200,
+        1,
+        br#"{"user": {"id": 1, "tags": ["x", "y"], "name": "a"}}"#
+    ));
+    assert!(!evaluate(
+        &a,
+        200,
+        1,
+        br#"{"user": {"id": 1, "tags": ["y", "x"], "name": "a"}}"#
+    ));
+    // Pointers use RFC 6901 escapes, unaffected by key order.
+    let escaped = Assertions {
+        json_pointer: "/a~1b/c~0d".into(),
+        json_expected: "2".into(),
+        ..Assertions::default()
+    };
+    assert!(evaluate(
+        &escaped,
+        200,
+        1,
+        br#"{"z": 0, "a/b": {"c~d": 2}}"#
+    ));
+}
+
+#[test]
 fn csv_requires_unique_headers_and_enough_rows() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("data.csv"), "id,name\n1,Alice\n2,Bob\n").unwrap();

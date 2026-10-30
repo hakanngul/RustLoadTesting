@@ -409,19 +409,19 @@ fn openapi_picker_lists_operations_and_builds_the_selection() {
         .iter()
         .map(|o| (o.key.as_str(), o.name.as_str()))
         .collect();
-    // Path order, then GET/POST/PUT/PATCH/DELETE within a path.
+    // Document order: paths and methods as written.
     assert_eq!(
         listed,
         [
-            ("GET /health", "/health"),
             ("GET /orders", "listOrders"),
             ("POST /orders", "createOrder"),
             ("GET /orders/{id}", "getOrder"),
             ("DELETE /orders/{id}", "Cancel order"),
+            ("GET /health", "/health"),
         ]
     );
     assert_eq!(spec.tags(), ["orders", "write"]);
-    let create = &spec.operations[2];
+    let create = &spec.operations[1];
     assert_eq!(create.method, "POST");
     assert_eq!(create.path, "/orders");
     assert_eq!(create.operation_id, "createOrder");
@@ -723,4 +723,379 @@ fn openapi_api_keys_become_secret_variable_references() {
         header(&s.requests[0], "X-Token").unwrap().value,
         "{{api_key}}"
     );
+}
+
+#[test]
+fn openapi_operations_follow_document_order() {
+    // Paths, methods and properties are deliberately not alphabetical.
+    let doc = r##"{
+      "openapi": "3.0.3",
+      "servers": [{"url": "http://h"}],
+      "paths": {
+        "/zeta": {"post": {"operationId": "zp", "requestBody": {"content": {"application/json": {
+          "schema": {"type": "object", "properties": {"z": {"example": 1}, "a": {"example": 2}, "m": {"example": 3}}}}}}},
+          "get": {"operationId": "zg"}},
+        "/alpha": {"delete": {"operationId": "ad"}, "get": {"operationId": "ag"}},
+        "/mid": {"options": {}, "patch": {"operationId": "mp"}}
+      }
+    }"##;
+    let spec = parse_openapi(doc.as_bytes(), "").unwrap();
+    let keys_in_order: Vec<_> = spec.operations.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(
+        keys_in_order,
+        [
+            "POST /zeta",
+            "GET /zeta",
+            "DELETE /alpha",
+            "GET /alpha",
+            "PATCH /mid"
+        ]
+    );
+    // A selection is built in document order too, whatever the key order.
+    let built = spec.build(&keys(&["PATCH /mid", "GET /alpha", "POST /zeta"]), 1);
+    let names: Vec<_> = built.requests.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["zp", "ag", "mp"]);
+    // Bodies keep the schema's property order.
+    let body = &built.requests[0].body.text;
+    let (z, a, m) = (
+        body.find("\"z\"").unwrap(),
+        body.find("\"a\"").unwrap(),
+        body.find("\"m\"").unwrap(),
+    );
+    assert!(z < a && a < m, "{body}");
+    assert!(built.warnings.iter().any(|w| w.contains("1 HEAD/OPTIONS")));
+}
+
+/// Writes `files` (relative path, contents) under `dir`.
+fn write_files(dir: &std::path::Path, files: &[(&str, &str)]) {
+    for (name, text) in files {
+        let path = dir.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+}
+
+#[test]
+fn openapi_external_refs_resolve_relative_to_each_file() {
+    let dir = tempfile::tempdir().unwrap();
+    write_files(
+        dir.path(),
+        &[
+            (
+                "common.json",
+                r##"{"components": {"schemas": {
+                  "Pet": {"type": "object", "required": ["name", "tag"], "properties": {
+                    "name": {"example": "Rex"}, "tag": {"$ref": "#/components/schemas/Tag"}}},
+                  "Tag": {"type": "string", "example": "dog"}},
+                  "parameters": {"Limit": {"name": "limit", "in": "query", "required": true, "example": 5}}}}"##,
+            ),
+            (
+                "schemas/order.json",
+                r##"{"type": "object", "required": ["item", "pet"], "properties": {
+                  "item": {"$ref": "item.json"},
+                  "pet": {"$ref": "../common.json#/components/schemas/Pet"}}}"##,
+            ),
+            (
+                "schemas/item.json",
+                r##"{"type": "integer", "example": 42}"##,
+            ),
+            (
+                "paths/orders.json",
+                r##"{"post": {"operationId": "createOrder", "parameters": [
+                  {"$ref": "../common.json#/components/parameters/Limit"}],
+                  "requestBody": {"content": {"application/json": {
+                    "schema": {"$ref": "../schemas/order.json"}}}}}}"##,
+            ),
+        ],
+    );
+    let doc = r##"{
+      "openapi": "3.0.3",
+      "servers": [{"url": "http://h"}],
+      "paths": {
+        "/pets": {"post": {"operationId": "createPet", "requestBody": {"content": {"application/json": {
+          "schema": {"$ref": "common.json#/components/schemas/Pet"}}}}}},
+        "/orders": {"$ref": "./paths/orders.json"},
+        "/items": {"put": {"operationId": "putItem", "requestBody": {"content": {"application/json": {
+          "schema": {"$ref": "schemas/item.json#"}}}}}}
+      }
+    }"##;
+    let spec = parse_openapi_in(doc.as_bytes(), dir.path(), "").unwrap();
+    assert!(spec.warnings.is_empty(), "{:?}", spec.warnings);
+    // common.json, order.json, item.json and orders.json, each read once.
+    assert_eq!(spec.referenced_files, 4);
+    let (pet, _) = body_of(&spec, "POST /pets");
+    assert_eq!(pet, serde_json::json!({"name": "Rex", "tag": "dog"}));
+    let (order, _) = body_of(&spec, "POST /orders");
+    assert_eq!(
+        order,
+        serde_json::json!({"item": 42, "pet": {"name": "Rex", "tag": "dog"}})
+    );
+    let built = spec.build(&keys(&["POST /orders"]), 1);
+    assert_eq!(built.requests[0].name, "createOrder");
+    assert_eq!(query(&built.requests[0], "limit").unwrap().value, "5");
+    assert_eq!(body_of(&spec, "PUT /items").0, serde_json::json!(42));
+
+    // Without the folder the same document lists the references instead.
+    let bytes_only = parse_openapi(doc.as_bytes(), "").unwrap();
+    assert_eq!(bytes_only.referenced_files, 0);
+    let w = bytes_only.warnings.join("\n");
+    assert!(
+        w.contains("\"common.json#/components/schemas/Pet\" refers to another file"),
+        "{w}"
+    );
+    // Document warnings are part of every build.
+    assert!(
+        bytes_only
+            .build(&keys(&["POST /pets"]), 1)
+            .warnings
+            .iter()
+            .any(|w| w.contains("./paths/orders.json"))
+    );
+}
+
+#[test]
+fn openapi_refs_across_files_stop_at_cycles() {
+    let dir = tempfile::tempdir().unwrap();
+    write_files(
+        dir.path(),
+        &[
+            (
+                "a.json",
+                r##"{"Pet": {"type": "object", "required": ["name", "owner"], "properties": {
+                  "name": {"type": "string"}, "owner": {"$ref": "b.json#/Owner"}}}}"##,
+            ),
+            (
+                "b.json",
+                r##"{"Owner": {"type": "object", "required": ["pets"], "properties": {
+                  "pets": {"type": "array", "items": {"$ref": "a.json#/Pet"}}}},
+                  "Loop": {"$ref": "a.json#/Loop"}}"##,
+            ),
+        ],
+    );
+    let doc = r##"{"openapi": "3.0.3", "servers": [{"url": "http://h"}], "paths": {
+      "/pets": {"post": {"requestBody": {"content": {"application/json": {
+        "schema": {"$ref": "a.json#/Pet"}}}}}}}}"##;
+    let spec = parse_openapi_in(doc.as_bytes(), dir.path(), "").unwrap();
+    assert_eq!(spec.referenced_files, 2);
+    let (body, _) = body_of(&spec, "POST /pets");
+    // Pet → Owner → [Pet] stops at the repeated Pet.
+    assert_eq!(body, serde_json::json!({"name": "", "owner": {"pets": []}}));
+    // b.json's own dangling reference is named, not followed forever.
+    assert!(
+        spec.warnings
+            .iter()
+            .any(|w| w.contains("\"a.json#/Loop\" points to nothing")),
+        "{:?}",
+        spec.warnings
+    );
+}
+
+#[test]
+fn openapi_external_refs_stay_local_and_bounded() {
+    let outer = tempfile::tempdir().unwrap();
+    let dir = outer.path().join("spec");
+    let marker = "SECRET-FILE-CONTENT";
+    write_files(
+        outer.path(),
+        &[
+            ("outside.json", &format!(r#"{{"x": "{marker}"}}"#)),
+            ("spec/ok.json", r#"{"type": "string", "example": "fine"}"#),
+            ("spec/notes.yaml", &format!("x: {marker}\n")),
+        ],
+    );
+    // Exactly at the limit is read; one byte more is not.
+    let pad = |n: usize| {
+        let mut s = String::from("{\"example\": 1, \"pad\": \"");
+        s.push_str(&" ".repeat(n - s.len() - 2));
+        s.push_str("\"}");
+        assert_eq!(s.len(), n);
+        s
+    };
+    let limit = REF_FILE_LIMIT as usize;
+    std::fs::write(dir.join("max.json"), pad(limit)).unwrap();
+    std::fs::write(dir.join("big.json"), pad(limit + 1)).unwrap();
+    for i in 0..REF_FILES_MAX {
+        std::fs::write(dir.join(format!("f{i:02}.json")), r#"{"example": 0}"#).unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outer.path().join("outside.json"), dir.join("link.json")).unwrap();
+
+    let schema = |r: &str| {
+        format!(r#"{{"content": {{"application/json": {{"schema": {{"$ref": "{r}"}}}}}}}}"#)
+    };
+    let mut paths = vec![
+        ("/ok", "ok.json".to_owned()),
+        ("/up", "../outside.json".to_owned()),
+        (
+            "/abs",
+            outer.path().join("outside.json").display().to_string(),
+        ),
+        ("/link", "link.json".to_owned()),
+        ("/url", "https://example.com/pet.json#/Pet".to_owned()),
+        ("/scheme", "file:///etc/hosts".to_owned()),
+        ("/missing", "missing.json".to_owned()),
+        ("/yaml", "notes.yaml".to_owned()),
+        ("/max", "max.json".to_owned()),
+        ("/big", "big.json".to_owned()),
+        ("/nothing", "ok.json#/nope".to_owned()),
+        ("/local", "#/components/schemas/Missing".to_owned()),
+    ];
+    // ok.json and max.json count too: two of these files exceed the limit.
+    for i in 0..REF_FILES_MAX {
+        paths.push(("/many", format!("f{i:02}.json")));
+    }
+    let entries: Vec<String> = paths
+        .iter()
+        .enumerate()
+        .map(|(i, (p, r))| {
+            format!(
+                r#""{p}{i}": {{"post": {{"operationId": "op{i}", "requestBody": {}}}}}"#,
+                schema(r)
+            )
+        })
+        .collect();
+    let doc = format!(
+        r#"{{"openapi": "3.0.3", "servers": [{{"url": "http://h"}}], "paths": {{{}}}}}"#,
+        entries.join(",")
+    );
+    let spec = parse_openapi_in(doc.as_bytes(), &dir, "").unwrap();
+    let w = spec.warnings.join("\n");
+    let warned = |r: &str, what: &str| {
+        assert!(w.contains(&format!("$ref \"{r}\" {what}")), "{r}: {w}");
+    };
+    warned("../outside.json", "leads outside the document's folder");
+    warned(
+        &outer.path().join("outside.json").display().to_string(),
+        "is an absolute path",
+    );
+    #[cfg(unix)]
+    warned("link.json", "leads outside the document's folder");
+    warned(
+        "https://example.com/pet.json#/Pet",
+        "is a URL and RustLoad never downloads references",
+    );
+    warned("file:///etc/hosts", "uses an unsupported scheme");
+    warned("missing.json", "names a file that does not exist");
+    warned(
+        "notes.yaml",
+        "names a file that is not JSON (YAML is not supported yet)",
+    );
+    warned("big.json", "names a file larger than 10 MiB");
+    warned("ok.json#/nope", "points to nothing");
+    warned("#/components/schemas/Missing", "points to nothing");
+    warned("f48.json", "would read more than 50 referenced files");
+    warned("f49.json", "would read more than 50 referenced files");
+    assert!(!w.contains("f47.json"), "{w}");
+    assert!(
+        !w.contains(marker),
+        "file contents never appear in warnings"
+    );
+    assert_eq!(spec.referenced_files, REF_FILES_MAX);
+    assert_eq!(body_of(&spec, "POST /ok0").0, serde_json::json!("fine"));
+    let max = paths.iter().position(|(p, _)| *p == "/max").unwrap();
+    assert_eq!(
+        body_of(&spec, &format!("POST /max{max}")).0,
+        serde_json::json!(1)
+    );
+    // Unresolved references leave the body to the usual empty-body warning.
+    let up = spec.build(&keys(&["POST /up1"]), 1);
+    assert!(up.requests[0].body.text.is_empty());
+    assert!(!up.requests[0].body.text.contains(marker));
+}
+
+#[test]
+fn openapi_servers_and_variables_can_be_chosen() {
+    let doc = r##"{
+      "openapi": "3.0.3",
+      "servers": [
+        {"url": "https://{env}.example.com:{port}/v1", "description": "Cloud",
+         "variables": {"env": {"default": "prod", "enum": ["prod", "staging"]},
+                       "port": {"default": "8443"}}},
+        {"url": "http://127.0.0.1:{port}", "variables": {"port": {"default": "8080", "enum": ["9090"]}}},
+        {"url": "/relative"}
+      ],
+      "paths": {"/pets": {"get": {}}}
+    }"##;
+    let mut spec = load_openapi(doc.as_bytes(), None).unwrap();
+    assert_eq!(spec.servers.len(), 3);
+    let cloud = &spec.servers[0];
+    assert_eq!(cloud.description, "Cloud");
+    let vars: Vec<_> = cloud
+        .variables
+        .iter()
+        .map(|v| (v.name.as_str(), v.default.as_str(), v.options.len()))
+        .collect();
+    assert_eq!(vars, [("env", "prod", 2), ("port", "8443", 0)]);
+    // A default missing from the enum is offered first.
+    assert_eq!(spec.servers[1].variables[0].options, ["8080", "9090"]);
+    // The first server with its defaults is selected on load.
+    assert_eq!(spec.base_url(), "https://prod.example.com:8443/v1");
+    let all = keys(&["GET /pets"]);
+    let url = |spec: &OpenApiSpec| spec.build(&all, 1).requests[0].url.clone();
+    assert_eq!(url(&spec), "https://prod.example.com:8443/v1/pets");
+
+    let mut choice = ServerChoice::defaults(&spec, 0);
+    assert_eq!(choice.values, ["prod", "8443"]);
+    choice.values[0] = "staging".into();
+    spec.select_server(&choice, "").unwrap();
+    assert_eq!(url(&spec), "https://staging.example.com:8443/v1/pets");
+    let mut local = ServerChoice::defaults(&spec, 1);
+    local.values[0] = "9090".into();
+    assert_eq!(
+        spec.select_server(&local, "").unwrap(),
+        "http://127.0.0.1:9090"
+    );
+    assert_eq!(url(&spec), "http://127.0.0.1:9090/pets");
+    // The Base URL field wins when it is not blank.
+    spec.select_server(&local, " http://localhost:7000/ ")
+        .unwrap();
+    assert_eq!(url(&spec), "http://localhost:7000/pets");
+    // A relative server cannot be used, and the base is cleared.
+    let relative = ServerChoice::defaults(&spec, 2);
+    assert!(
+        spec.select_server(&relative, "")
+            .unwrap_err()
+            .contains("enter a base URL")
+    );
+    assert_eq!(spec.base_url(), "");
+    for bad in ["http://user:pw@host", "ftp://host", "http://host/?a=1"] {
+        assert!(spec.select_server(&local, bad).is_err(), "{bad}");
+    }
+
+    // Swagger 2.0: several schemes become a "scheme" choice.
+    let swagger = r#"{"swagger": "2.0", "host": "api.example.com", "basePath": "/v2",
+      "schemes": ["http", "https"], "paths": {"/pets": {"get": {}}}}"#;
+    let mut spec = load_openapi(swagger.as_bytes(), None).unwrap();
+    assert_eq!(spec.servers.len(), 1);
+    let scheme = &spec.servers[0].variables[0];
+    assert_eq!(
+        (scheme.name.as_str(), scheme.options.clone()),
+        ("scheme", vec!["http".to_owned(), "https".to_owned()])
+    );
+    assert_eq!(url(&spec), "http://api.example.com/v2/pets");
+    let mut choice = ServerChoice::defaults(&spec, 0);
+    choice.values[0] = "https".into();
+    spec.select_server(&choice, "").unwrap();
+    assert_eq!(url(&spec), "https://api.example.com/v2/pets");
+    // A single scheme offers no choice.
+    let one = swagger.replace(r#"["http", "https"]"#, r#"["https"]"#);
+    let spec = load_openapi(one.as_bytes(), None).unwrap();
+    assert!(spec.servers[0].variables[0].options.is_empty());
+    assert_eq!(spec.base_url(), "https://api.example.com/v2");
+    // Without a host or servers, loading works but a base URL is needed.
+    let hostless = r#"{"swagger": "2.0", "paths": {"/a": {"get": {}}}}"#;
+    let mut spec = load_openapi(hostless.as_bytes(), None).unwrap();
+    assert_eq!(spec.base_url(), "");
+    let none = ServerChoice::defaults(&spec, 0);
+    assert!(
+        spec.select_server(&none, "")
+            .unwrap_err()
+            .contains("no host")
+    );
+    spec.select_server(&none, "http://127.0.0.1:1").unwrap();
+    assert_eq!(url_of(&spec, "GET /a"), "http://127.0.0.1:1/a");
+}
+
+fn url_of(spec: &OpenApiSpec, key: &str) -> String {
+    spec.build(&keys(&[key]), 1).requests[0].url.clone()
 }

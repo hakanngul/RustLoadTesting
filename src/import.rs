@@ -675,8 +675,12 @@ pub fn from_har(bytes: &[u8], first_id: u64, api_only: bool) -> Result<Imported,
 
 // ---------------------------------------------------------------- OpenAPI
 
+mod refs;
+pub use refs::{REF_FILE_LIMIT, REF_FILES_MAX};
+
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 const OPENAPI_METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 /// Nesting limit for generated values; deeper schemas are left out.
@@ -956,41 +960,124 @@ fn variable_name(name: &str) -> String {
         .collect()
 }
 
-/// Base URL from `servers` (OpenAPI 3, with variables at their defaults) or
-/// `schemes`/`host`/`basePath` (Swagger 2.0), unless `override_url` is set.
-fn base_url(doc: &Value, override_url: &str) -> Result<String, String> {
-    let raw = if !override_url.trim().is_empty() {
-        override_url.trim().to_owned()
-    } else if doc.get("swagger").is_some() {
-        let host = doc
-            .get("host")
-            .and_then(Value::as_str)
-            .ok_or("The document has no host; enter a base URL")?;
-        let scheme = doc
-            .pointer("/schemes/0")
-            .and_then(Value::as_str)
-            .unwrap_or("https");
-        let base_path = doc.get("basePath").and_then(Value::as_str).unwrap_or("");
-        format!("{scheme}://{host}{base_path}")
-    } else {
-        let server = doc
-            .pointer("/servers/0")
-            .ok_or("The document has no servers; enter a base URL")?;
-        let mut url = server
-            .get("url")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        if let Some(vars) = server.get("variables").and_then(Value::as_object) {
-            for (name, var) in vars {
-                if let Some(default) = var.get("default") {
-                    url = url.replace(&format!("{{{name}}}"), &text(default));
-                }
-            }
+/// One entry of `servers` (OpenAPI 3). A Swagger 2.0 document has one server
+/// `{scheme}://host/basePath` whose `scheme` variable lists its `schemes`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenApiServer {
+    /// URL template with `{variable}` placeholders.
+    pub url: String,
+    pub description: String,
+    pub variables: Vec<ServerVariable>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerVariable {
+    pub name: String,
+    pub default: String,
+    /// The `enum` values (the default first when it is missing from them);
+    /// empty when the variable has no `enum`.
+    pub options: Vec<String>,
+}
+
+/// The chosen server and a value per variable of that server.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ServerChoice {
+    pub server: usize,
+    pub values: Vec<String>,
+}
+impl ServerChoice {
+    /// Server `index` with its variables at their defaults.
+    pub fn defaults(spec: &OpenApiSpec, index: usize) -> Self {
+        Self {
+            server: index,
+            values: spec
+                .servers
+                .get(index)
+                .map(|s| s.variables.iter().map(|v| v.default.clone()).collect())
+                .unwrap_or_default(),
         }
-        url
-    };
-    let url = url::Url::parse(&raw)
+    }
+}
+
+/// The servers a document lists (see [`OpenApiServer`]).
+fn servers(doc: &Value) -> Vec<OpenApiServer> {
+    if doc.get("swagger").is_some() {
+        let Some(host) = doc.get("host").and_then(Value::as_str) else {
+            return Vec::new();
+        };
+        let base_path = doc.get("basePath").and_then(Value::as_str).unwrap_or("");
+        let mut schemes: Vec<String> = doc
+            .get("schemes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        if schemes.is_empty() {
+            schemes.push("https".into());
+        }
+        return vec![OpenApiServer {
+            url: format!("{{scheme}}://{host}{base_path}"),
+            description: String::new(),
+            variables: vec![ServerVariable {
+                name: "scheme".into(),
+                default: schemes[0].clone(),
+                options: if schemes.len() > 1 {
+                    schemes
+                } else {
+                    Vec::new()
+                },
+            }],
+        }];
+    }
+    doc.get("servers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|server| {
+            let url = server.get("url").and_then(Value::as_str)?.to_owned();
+            let variables = server
+                .get("variables")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .map(|(name, var)| {
+                    let default = var.get("default").map(text).unwrap_or_default();
+                    let mut options: Vec<String> = var
+                        .get("enum")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(text)
+                        .collect();
+                    if !options.is_empty() && !options.contains(&default) {
+                        options.insert(0, default.clone());
+                    }
+                    ServerVariable {
+                        name: name.clone(),
+                        default,
+                        options,
+                    }
+                })
+                .collect();
+            Some(OpenApiServer {
+                url,
+                description: server
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                variables,
+            })
+        })
+        .collect()
+}
+
+/// Checks a base URL: absolute http(s) with a host, no credentials, query or
+/// unresolved variables. Returns it without a trailing slash.
+fn checked_base(raw: &str) -> Result<String, String> {
+    let url = url::Url::parse(raw)
         .map_err(|_| format!("Server URL {raw:?} is not absolute; enter a base URL"))?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err("The base URL must be an http(s) URL with a host".into());
@@ -1012,7 +1099,8 @@ pub struct OpenApiOperation {
     pub name: String,
     pub operation_id: String,
     pub tags: Vec<String>,
-    /// Request with ID 0; [`OpenApiSpec::build`] assigns IDs.
+    /// Request with ID 0 and the URL path only; [`OpenApiSpec::build`]
+    /// assigns IDs and prepends the base URL.
     request: Request,
     variables: Vec<Field>,
     missing_values: Vec<String>,
@@ -1035,15 +1123,65 @@ impl OpenApiOperation {
     }
 }
 
-/// A parsed OpenAPI document: the operations to choose from. Parse once with
-/// [`parse_openapi`], then [`OpenApiSpec::build`] the selected operations.
+/// A parsed OpenAPI document: the operations to choose from. Load once with
+/// [`load_openapi`] (or [`parse_openapi`]), choose a server with
+/// [`OpenApiSpec::select_server`], then [`OpenApiSpec::build`] the selected
+/// operations; neither re-reads the document.
 #[derive(Debug, Clone, Default)]
 pub struct OpenApiSpec {
-    /// Operations in path order, then GET/POST/PUT/PATCH/DELETE order per path.
+    /// Operations in document order: paths as written, methods as written
+    /// within a path.
     pub operations: Vec<OpenApiOperation>,
+    pub servers: Vec<OpenApiServer>,
+    /// Warnings about the document itself (unresolved `$ref`s), also part of
+    /// every [`OpenApiSpec::build`] result.
+    pub warnings: Vec<String>,
+    /// Referenced files read besides the document.
+    pub referenced_files: usize,
+    swagger: bool,
     other_methods: usize,
+    /// Current base URL without a trailing slash; empty until a server is
+    /// selected successfully.
+    base: String,
 }
 impl OpenApiSpec {
+    /// The base URL for `choice`, or `override_url` when it is not blank.
+    pub fn server_url(&self, choice: &ServerChoice, override_url: &str) -> Result<String, String> {
+        if !override_url.trim().is_empty() {
+            return checked_base(override_url.trim());
+        }
+        let Some(server) = self.servers.get(choice.server) else {
+            return Err(if self.swagger {
+                "The document has no host; enter a base URL".into()
+            } else {
+                "The document has no servers; enter a base URL".into()
+            });
+        };
+        let mut url = server.url.clone();
+        for (i, var) in server.variables.iter().enumerate() {
+            let value = choice.values.get(i).unwrap_or(&var.default);
+            url = url.replace(&format!("{{{}}}", var.name), value);
+        }
+        checked_base(&url)
+    }
+
+    /// Uses [`OpenApiSpec::server_url`] for the requests [`OpenApiSpec::build`]
+    /// makes. On error the previous base URL is cleared.
+    pub fn select_server(
+        &mut self,
+        choice: &ServerChoice,
+        override_url: &str,
+    ) -> Result<String, String> {
+        let result = self.server_url(choice, override_url);
+        self.base = result.clone().unwrap_or_default();
+        result
+    }
+
+    /// The base URL requests are built with; empty when none is selected.
+    pub fn base_url(&self) -> &str {
+        &self.base
+    }
+
     /// All tags in name order.
     pub fn tags(&self) -> Vec<String> {
         let tags: BTreeSet<&String> = self.operations.iter().flat_map(|o| &o.tags).collect();
@@ -1054,7 +1192,10 @@ impl OpenApiSpec {
     /// with IDs from `first_id`. At most [`IMPORT_LIMIT`] are built; warnings
     /// and variables cover only the built operations.
     pub fn build(&self, selected: &BTreeSet<String>, first_id: u64) -> Imported {
-        let mut notes = Notes::default();
+        let mut notes = Notes {
+            warnings: self.warnings.clone(),
+            ..Notes::default()
+        };
         let mut requests = Vec::new();
         let mut variables: Vec<Field> = Vec::new();
         let (mut missing, mut other_auth, mut cookie_keys) =
@@ -1071,6 +1212,7 @@ impl OpenApiSpec {
             built.push(op);
             let mut request = op.request.clone();
             request.id = first_id + requests.len() as u64;
+            request.url = format!("{}{}", self.base, op.request.url);
             requests.push(request);
             for v in &op.variables {
                 if !variables.iter().any(|f| f.name == v.name) {
@@ -1194,8 +1336,8 @@ fn classify(scheme: Option<&Value>) -> Scheme<'_> {
     }
 }
 
-/// Variable names for header/query API key schemes in scheme-name order:
-/// `api_key`, `api_key_2`, …
+/// Variable names for header/query API key schemes in the order the document
+/// defines them: `api_key`, `api_key_2`, …
 fn api_key_variables(doc: &Value) -> BTreeMap<String, String> {
     let mut names = BTreeMap::new();
     for definitions in [
@@ -1223,11 +1365,41 @@ fn api_key_variables(doc: &Value) -> BTreeMap<String, String> {
 }
 
 /// Parses an OpenAPI 3.x or Swagger 2.0 JSON document into its
-/// GET/POST/PUT/PATCH/DELETE operations. Path parameters become
+/// GET/POST/PUT/PATCH/DELETE operations with the first server (variables at
+/// their defaults) or `base_override`. External `$ref`s are not followed; see
+/// [`parse_openapi_in`].
+pub fn parse_openapi(bytes: &[u8], base_override: &str) -> Result<OpenApiSpec, String> {
+    with_default_server(load_openapi(bytes, None)?, base_override)
+}
+
+/// [`parse_openapi`] for a document in `base_dir`: `$ref`s to local files in
+/// that folder tree are followed (see [`load_openapi`]).
+pub fn parse_openapi_in(
+    bytes: &[u8],
+    base_dir: &Path,
+    base_override: &str,
+) -> Result<OpenApiSpec, String> {
+    with_default_server(load_openapi(bytes, Some(base_dir))?, base_override)
+}
+
+fn with_default_server(mut spec: OpenApiSpec, base_override: &str) -> Result<OpenApiSpec, String> {
+    let choice = ServerChoice::defaults(&spec, 0);
+    spec.select_server(&choice, base_override)?;
+    Ok(spec)
+}
+
+/// Parses an OpenAPI 3.x or Swagger 2.0 JSON document into its
+/// GET/POST/PUT/PATCH/DELETE operations and servers. Path parameters become
 /// `{{variables}}`; required query and header parameters use the document's
 /// examples; JSON bodies use examples and otherwise type placeholders.
-pub fn parse_openapi(bytes: &[u8], base_override: &str) -> Result<OpenApiSpec, String> {
-    let doc: Value = serde_json::from_slice(bytes)
+///
+/// With `base_dir` (the folder of the document's file), `$ref`s to other
+/// JSON files in that folder tree are read; URL references are never
+/// downloaded. Unresolved references are listed in
+/// [`OpenApiSpec::warnings`]. The first server is selected when its URL is
+/// usable; otherwise call [`OpenApiSpec::select_server`].
+pub fn load_openapi(bytes: &[u8], base_dir: Option<&Path>) -> Result<OpenApiSpec, String> {
+    let mut doc = refs::parse_document(bytes)
         .map_err(|e| format!("Not a JSON document (YAML is not supported): {e}"))?;
     let version = doc
         .get("openapi")
@@ -1237,42 +1409,47 @@ pub fn parse_openapi(bytes: &[u8], base_override: &str) -> Result<OpenApiSpec, S
     if !(version.starts_with("3.") || version == "2.0") {
         return Err("Not an OpenAPI 3.x or Swagger 2.0 document".into());
     }
-    let base = base_url(&doc, base_override)?;
+    let (warnings, referenced_files) = refs::bundle(&mut doc, base_dir);
+    let doc = doc;
     let paths = doc
         .get("paths")
         .and_then(Value::as_object)
         .ok_or("The document has no paths")?;
     let key_vars = api_key_variables(&doc);
-    let mut spec = OpenApiSpec::default();
+    let mut spec = OpenApiSpec {
+        servers: servers(&doc),
+        swagger: doc.get("swagger").is_some(),
+        warnings,
+        referenced_files,
+        ..OpenApiSpec::default()
+    };
     for (path, item) in paths {
         let item = resolve(&doc, item);
         let Some(operations) = item.as_object() else {
             continue;
         };
-        for method in OPENAPI_METHODS {
-            if let Some(op) = operations.get(method) {
+        for (method, op) in operations {
+            if OPENAPI_METHODS.contains(&method.as_str()) {
                 spec.operations.push(operation(
                     &doc,
-                    &base,
                     &key_vars,
                     path,
                     item,
                     method,
                     resolve(&doc, op),
                 ));
+            } else if matches!(method.as_str(), "head" | "options" | "trace") {
+                spec.other_methods += 1;
             }
         }
-        spec.other_methods += operations
-            .keys()
-            .filter(|m| matches!(m.as_str(), "head" | "options" | "trace"))
-            .count();
     }
+    let first = ServerChoice::defaults(&spec, 0);
+    let _ = spec.select_server(&first, "");
     Ok(spec)
 }
 
 fn operation(
     doc: &Value,
-    base: &str,
     key_vars: &BTreeMap<String, String>,
     path: &str,
     item: &Value,
@@ -1462,7 +1639,7 @@ fn operation(
         id: 0,
         name: result.name.clone(),
         method: result.method.clone(),
-        url: format!("{base}{url_path}"),
+        url: url_path,
         query,
         headers,
         body,
