@@ -1403,11 +1403,12 @@ fn with_default_server(mut spec: OpenApiSpec, base_override: &str) -> Result<Ope
 pub fn load_openapi(bytes: &[u8], base_dir: Option<&Path>) -> Result<OpenApiSpec, String> {
     let mut doc = refs::parse_document(bytes)
         .map_err(|e| format!("Not a valid JSON or YAML document: {e}"))?;
-    let version = doc
-        .get("openapi")
-        .or_else(|| doc.get("swagger"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    // Unquoted YAML versions (`swagger: 2.0`, `openapi: 3.1`) arrive as numbers.
+    let version = match doc.get("openapi").or_else(|| doc.get("swagger")) {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        _ => String::new(),
+    };
     if !(version.starts_with("3.") || version == "2.0") {
         return Err("Not an OpenAPI 3.x or Swagger 2.0 document".into());
     }

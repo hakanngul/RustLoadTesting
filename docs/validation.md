@@ -6,9 +6,12 @@ OpenAPI documents and referenced files may be YAML (new dependency
 `yaml-rust2` 0.13.0; Cargo.lock adds `yaml-rust2`, `arraydeque` 0.5.1 and
 `hashlink` 0.12.2). The dialog tab reads "OpenAPI (JSON/YAML)".
 
-- 99 tests pass (3 YAML unit tests in the library, 6 compare, 25 core/report,
-  16 dashboard, 26 engine, 23 import); fmt, strict Clippy, build and
+- 100 tests pass (3 YAML unit tests in the library, 6 compare, 25 core/report,
+  16 dashboard, 26 engine, 24 import); fmt, strict Clippy, build and
   `git diff --check` succeed.
+- `openapi_yaml_unquoted_versions_are_accepted`: `swagger: 2.0` and
+  `openapi: 3.1` written without quotes (read as numbers) are accepted;
+  `openapi: 4.0` is still refused.
 - Unit (`import::yaml`): core-schema scalars (hex/octal, floats, 64-bit
   overflow to float; `.inf`, `.nan`, `1e999`, `yes`, `off`, `1_000`, `1:20`
   stay text; quoted numbers stay text); integer/boolean/float/null keys as

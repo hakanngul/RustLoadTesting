@@ -286,7 +286,8 @@ the requests and warnings, then add them to the plan or replace its requests.
   values. Basic Auth needs its credentials. API keys in cookies, other schemes,
   cookie parameters and non-JSON bodies are listed in the preview.
 - YAML is read with the YAML 1.2 core schema: `yes`/`no`/`on`/`off` stay text,
-  unquoted numbers and `true`/`false`/`null` are typed, quoted values are text.
+  unquoted numbers and `true`/`false`/`null` are typed, quoted values are text
+  (an unquoted `swagger: 2.0` or `openapi: 3.1` version is still accepted).
   Keys keep the order and the text they are written with (`200:` is the
   response code `"200"`). Anchors, aliases and `<<` merge keys work; other
   tags than the core ones (`!!str`, `!!int`…) are ignored. `.inf`/`.nan` stay

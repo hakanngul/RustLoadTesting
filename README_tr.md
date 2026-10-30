@@ -312,7 +312,8 @@ plana ekleyebilir ya da mevcut isteklerin yerine koyabilirsiniz.
   önizlemede listelenir.
 - YAML, YAML 1.2 core şemasıyla okunur: `yes`/`no`/`on`/`off` metin kalır;
   tırnaksız sayılar ve `true`/`false`/`null` türlenir; tırnaklı değerler
-  metindir. Anahtarlar yazıldıkları sırayı ve metni korur (`200:` yanıt kodu
+  metindir (tırnaksız `swagger: 2.0` veya `openapi: 3.1` sürümü yine kabul
+  edilir). Anahtarlar yazıldıkları sırayı ve metni korur (`200:` yanıt kodu
   `"200"` olur). Anchor, alias ve `<<` birleştirme anahtarları çalışır; core
   dışındaki etiketler (`!!str`, `!!int`… dışındakiler) yok sayılır. JSON'da
   karşılığı olmadığı için `.inf`/`.nan` metin kalır. Dosya başına tek belge;

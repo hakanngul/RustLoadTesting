@@ -1410,3 +1410,21 @@ fn openapi_yaml_external_refs_load_like_json_ones() {
     assert!(w.contains("line"), "{w}");
     assert!(!w.contains("SECRET-FILE-CONTENT"), "{w}");
 }
+
+#[test]
+fn openapi_yaml_unquoted_versions_are_accepted() {
+    // YAML reads `swagger: 2.0` and `openapi: 3.1` as numbers.
+    let swagger = "swagger: 2.0\nhost: api.example.com\npaths:\n  /a:\n    get: {}\n";
+    let imported = from_openapi(swagger.as_bytes(), 1, "").unwrap();
+    assert_eq!(imported.requests.len(), 1);
+    let openapi =
+        "openapi: 3.1\nservers: [{url: 'https://api.example.com'}]\npaths:\n  /b:\n    get: {}\n";
+    assert_eq!(
+        from_openapi(openapi.as_bytes(), 1, "")
+            .unwrap()
+            .requests
+            .len(),
+        1
+    );
+    assert!(from_openapi(b"openapi: 4.0\npaths: {}\n", 1, "").is_err());
+}
