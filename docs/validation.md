@@ -1,5 +1,60 @@
 # Validation evidence
 
+## OpenAPI document order, external refs and server choice
+
+OpenAPI operations now follow the document (serde_json `preserve_order`; no new
+crate). `$ref`s to local JSON files inside the document's folder are bundled
+before parsing; the dialog offers server, server-variable `enum` and Swagger
+scheme dropdowns that re-derive URLs without re-reading files.
+
+- 90 tests pass (6 compare, 25 core/report, 16 dashboard, 25 engine, 18 import);
+  fmt, strict Clippy, build and `git diff --check` succeed.
+- New import tests: `openapi_operations_follow_document_order` (non-alphabetical
+  paths and methods, selection built in document order, body properties keep
+  schema order), `openapi_external_refs_resolve_relative_to_each_file`
+  (sibling file with pointer, `./paths/…` path item, subfolder file, reference
+  inside a referenced file, `../common.json` that stays inside the folder,
+  whole-file and `file#` references; each of four files read once; the
+  bytes-only entry point lists the references instead),
+  `openapi_refs_across_files_stop_at_cycles` (Pet → Owner → [Pet] across two
+  files stops at the repetition; a dangling reference in a referenced file is
+  named), `openapi_external_refs_stay_local_and_bounded` (`..` escape,
+  absolute path, symlink to a file outside (unix), https URL, `file:` scheme,
+  missing file, YAML file, a file of exactly 10 MiB read and one byte over
+  refused, 50-file limit in document order, pointer to nothing in an external
+  and in the root document; no warning contains file contents),
+  `openapi_servers_and_variables_can_be_chosen` (servers with descriptions,
+  enum/non-enum variables, default missing from its enum offered first,
+  re-selection changes built URLs, Base URL override wins, relative server and
+  bad URLs rejected and the base cleared, Swagger schemes choice, hostless
+  Swagger needs a base URL). The picker test now expects document order.
+- `json_assertions_compare_objects_regardless_of_key_order` (core): with
+  `preserve_order`, an expected object matches a response with other key
+  order, array order still counts, RFC 6901 escapes still resolve. All
+  existing engine extraction/assertion tests pass unchanged.
+- `imported_multi_file_openapi_spec_runs_with_a_chosen_server` (engine): a
+  spec split over four files (path item, shared parameter, schema with a
+  nested file reference) with the second server and its port enum chosen runs
+  against the localhost fixture with zero failures; the first step's
+  extracted `/request/method` reaches the second step as a header.
+- Native Linux/Xvfb (fixture on 127.0.0.1:8080): a spec in a scratch folder
+  with `paths/echo.json`, `schemas/order.json` and `schemas/item.json`, two
+  servers (Production; Local `http://{host}:{port}` with enums) and one https
+  `$ref`. Preview listed /echo GET/POST/PUT, /health, /broken, /about in file
+  order, "Read 3 referenced file(s)", the URL warning, and "Requests go to
+  https://api.invalid/v1". Choosing Local showed host and port dropdowns;
+  127.0.0.1 and 8080 changed the target to `http://127.0.0.1:8080`. Typing a
+  Base URL disabled the dropdowns and showed "(Base URL field)"; clearing it
+  restored the selection with the operation choice kept. Four of six
+  operations imported (Replace); a 30 s run with 10 users sent 600 requests,
+  0.00 % errors, all HTTP 200. Light theme at 900×720 and Dark at 1440×900
+  were checked. Fixed during this check: the server row's labels and combo
+  boxes stepped downwards (labels moved into the combo text, row top-aligned),
+  and at 900×720 the taller dialog ran past the window bottom (the list and
+  warnings now take the height left on screen below them).
+- Not checked: macOS/Windows, YAML, very large multi-file specs in the dialog,
+  symlink handling on Windows.
+
 ## OpenAPI operation picker update
 
 The OpenAPI import parses the document once and lets you choose operations

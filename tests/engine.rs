@@ -931,3 +931,92 @@ fn selected_openapi_operations_with_api_keys_reach_the_server() {
     assert_eq!(s.endpoints.len(), 2);
     assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
 }
+
+#[test]
+fn imported_multi_file_openapi_spec_runs_with_a_chosen_server() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let port = server.address.port();
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write(
+        "paths/echo.json",
+        r##"{
+          "get": {"operationId": "echoGet"},
+          "post": {"operationId": "echoPost",
+            "parameters": [{"$ref": "../components.json#/parameters/Custom"}],
+            "requestBody": {"content": {"application/json": {
+              "schema": {"$ref": "../schemas/order.json"}}}}}
+        }"##,
+    );
+    write(
+        "components.json",
+        r##"{"parameters": {"Custom": {"name": "X-Custom", "in": "header", "required": true,
+          "example": "{{method}}"}}}"##,
+    );
+    write(
+        "schemas/order.json",
+        r##"{"type": "object", "required": ["qty", "item"], "properties": {
+          "qty": {"type": "integer", "minimum": 2}, "item": {"$ref": "item.json"}}}"##,
+    );
+    write(
+        "schemas/item.json",
+        r##"{"type": "string", "example": "book"}"##,
+    );
+    let doc = format!(
+        r##"{{
+          "openapi": "3.0.3",
+          "servers": [
+            {{"url": "https://api.invalid"}},
+            {{"url": "http://127.0.0.1:{{port}}", "variables": {{"port": {{"default": "1", "enum": ["1", "{port}"]}}}}}}
+          ],
+          "paths": {{"/echo": {{"$ref": "paths/echo.json"}}, "/health": {{"get": {{}}}}}}
+        }}"##
+    );
+    let mut spec = rustload::import::load_openapi(doc.as_bytes(), Some(dir.path())).unwrap();
+    assert!(spec.warnings.is_empty(), "{:?}", spec.warnings);
+    assert_eq!(spec.referenced_files, 4);
+    let mut choice = rustload::import::ServerChoice::defaults(&spec, 1);
+    choice.values[0] = port.to_string();
+    spec.select_server(&choice, "").unwrap();
+    let selected = ["GET /echo", "POST /echo"]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+    let mut imported = spec.build(&selected, 1);
+    assert_eq!(imported.requests.len(), 2);
+    assert_eq!(
+        imported.requests[1].url,
+        format!("http://127.0.0.1:{port}/echo")
+    );
+    let body: serde_json::Value = serde_json::from_str(&imported.requests[1].body.text).unwrap();
+    assert_eq!(body, serde_json::json!({"qty": 2, "item": "book"}));
+    // The first step extracts a value the second sends as its header.
+    imported.requests[0].extractors.push(Extractor {
+        variable: "method".into(),
+        pointer: "/request/method".into(),
+    });
+    imported.requests[1].assertions = Assertions {
+        json_pointer: "/request/custom".into(),
+        json_expected: "\"GET\"".into(),
+        ..Assertions::default()
+    };
+    let mut plan = TestPlan {
+        requests: imported.requests,
+        variables: imported.variables,
+        ..TestPlan::default()
+    };
+    plan.load.users = 1;
+    plan.load.duration_secs = 1;
+    plan.load.rps_limit = 30;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    assert_eq!(s.counts.failed, 0, "{:?} {:?}", s.errors, s.logs);
+    assert_eq!(s.endpoints.len(), 2);
+    assert!(s.endpoints.iter().all(|e| e.counts.successful > 0));
+}

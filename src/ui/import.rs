@@ -2,7 +2,8 @@
 //! document into the plan.
 use super::*;
 use crate::import::{
-    HAR_SIZE_LIMIT, IMPORT_LIMIT, Imported, OpenApiSpec, from_curl, from_har, parse_openapi,
+    HAR_SIZE_LIMIT, IMPORT_LIMIT, Imported, OpenApiSpec, ServerChoice, from_curl, from_har,
+    load_openapi,
 };
 use std::collections::BTreeSet;
 
@@ -37,20 +38,33 @@ struct Picker {
     method: Option<&'static str>,
     tag: Option<String>,
     tags: Vec<String>,
+    /// Server and variable values from the document's lists.
+    choice: ServerChoice,
+    /// The base URL requests get (from `choice` or the Base URL field).
+    base: Result<String, String>,
     /// Requests of the current selection, for the warnings; rebuilt on change.
     built: Option<Imported>,
 }
 impl Picker {
-    fn new(spec: OpenApiSpec) -> Self {
-        Self {
+    fn new(spec: OpenApiSpec, base_override: &str) -> Self {
+        let mut picker = Self {
             selected: spec.operations.iter().map(|o| o.key.clone()).collect(),
             tags: spec.tags(),
+            choice: ServerChoice::defaults(&spec, 0),
             spec,
             filter: String::new(),
             method: None,
             tag: None,
+            base: Ok(String::new()),
             built: None,
-        }
+        };
+        picker.select_server(base_override);
+        picker
+    }
+    /// Re-derives the base URL from the choice and the Base URL field.
+    fn select_server(&mut self, base_override: &str) {
+        self.base = self.spec.select_server(&self.choice, base_override);
+        self.built = None;
     }
     /// Indices of the operations the filters show.
     fn visible(&self) -> Vec<usize> {
@@ -95,14 +109,20 @@ impl ImportDialog {
         from_har(&bytes, first_id, self.api_only)
     }
 
-    fn parse_openapi(&self) -> Result<OpenApiSpec, String> {
+    /// Reads the document and the local files it refers to (relative to its
+    /// folder).
+    fn load_openapi(&self) -> Result<OpenApiSpec, String> {
         let path = self.path.trim();
         let meta = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
         if meta.len() > HAR_SIZE_LIMIT {
             return Err("File exceeds 50 MiB".into());
         }
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        parse_openapi(&bytes, &self.base_url)
+        let dir = std::path::Path::new(path)
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        load_openapi(&bytes, Some(dir))
     }
 }
 
@@ -144,12 +164,8 @@ impl RustLoadApp {
                     }
                 });
                 ui.separator();
-                let before = (
-                    dialog.curl.clone(),
-                    dialog.path.clone(),
-                    dialog.api_only,
-                    dialog.base_url.clone(),
-                );
+                let before = (dialog.curl.clone(), dialog.path.clone(), dialog.api_only);
+                let base_before = dialog.base_url.clone();
                 if dialog.source == Source::Har {
                     ui.label("HAR file path (DevTools > Network > Save all as HAR)");
                     ui.add(egui::TextEdit::singleline(&mut dialog.path).desired_width(f32::INFINITY));
@@ -157,7 +173,7 @@ impl RustLoadApp {
                 } else if dialog.source == Source::OpenApi {
                     ui.label("OpenAPI 3.x or Swagger 2.0 JSON file path");
                     ui.add(egui::TextEdit::singleline(&mut dialog.path).desired_width(f32::INFINITY));
-                    ui.label("Base URL (optional; replaces the document's server URL)");
+                    ui.label("Base URL (optional; replaces the selected server)");
                     ui.add(
                         egui::TextEdit::singleline(&mut dialog.base_url)
                             .desired_width(f32::INFINITY)
@@ -165,7 +181,7 @@ impl RustLoadApp {
                     );
                     ui.label(
                         RichText::new(
-                            "Preview lists the GET/POST/PUT/PATCH/DELETE operations; choose which to import. Path parameters become {{variables}}; required query/header parameters use the document's examples; JSON bodies use examples, else type placeholders to review. Bearer/OAuth and API keys become secret variable references.",
+                            "Preview lists the GET/POST/PUT/PATCH/DELETE operations in document order; choose which to import. $refs to JSON files in the document's folder are read; URLs are never downloaded. Path parameters become {{variables}}; required query/header parameters use the document's examples; JSON bodies use examples, else type placeholders to review. Bearer/OAuth and API keys become secret variable references.",
                         )
                         .small()
                         .color(p.muted),
@@ -182,16 +198,15 @@ impl RustLoadApp {
                         );
                     });
                 }
-                if before
-                    != (
-                        dialog.curl.clone(),
-                        dialog.path.clone(),
-                        dialog.api_only,
-                        dialog.base_url.clone(),
-                    )
-                {
+                if before != (dialog.curl.clone(), dialog.path.clone(), dialog.api_only) {
                     dialog.preview = None;
                     dialog.picker = None;
+                }
+                if base_before != dialog.base_url
+                    && let Some(picker) = &mut dialog.picker
+                {
+                    // The parsed document stays; only the URLs change.
+                    picker.select_server(&dialog.base_url);
                 }
                 ui.horizontal_wrapped(|ui| {
                     ui.radio_value(&mut dialog.replace, false, "Add to current requests");
@@ -208,9 +223,9 @@ impl RustLoadApp {
                 ui.horizontal(|ui| {
                     if ui.button("Preview").clicked() {
                         if dialog.source == Source::OpenApi {
-                            match dialog.parse_openapi() {
+                            match dialog.load_openapi() {
                                 Ok(spec) => {
-                                    dialog.picker = Some(Picker::new(spec));
+                                    dialog.picker = Some(Picker::new(spec, &dialog.base_url));
                                     dialog.preview = None;
                                 }
                                 Err(e) => {
@@ -224,7 +239,9 @@ impl RustLoadApp {
                     }
                     let ready = match &dialog.picker {
                         Some(picker) if dialog.source == Source::OpenApi => {
-                            !picker.selected.is_empty() && picker.selected.len() <= room
+                            !picker.selected.is_empty()
+                                && picker.selected.len() <= room
+                                && picker.base.is_ok()
                         }
                         _ => matches!(&dialog.preview, Some(Ok(i)) if !i.requests.is_empty()),
                     };
@@ -234,6 +251,7 @@ impl RustLoadApp {
                 });
                 if let Some(picker) = &mut dialog.picker {
                     let kept = if dialog.replace { 0 } else { existing };
+                    server_ui(ui, picker, p, &dialog.base_url);
                     picker_ui(ui, picker, p, kept, first_id);
                 }
                 match &dialog.preview {
@@ -326,6 +344,110 @@ impl RustLoadApp {
     }
 }
 
+/// Server and server-variable choices (only where the document offers more
+/// than one value) and the base URL the requests get.
+fn server_ui(ui: &mut egui::Ui, picker: &mut Picker, p: Palette, base_override: &str) {
+    ui.separator();
+    let overridden = !base_override.trim().is_empty();
+    let spec = &picker.spec;
+    let mut choice = picker.choice.clone();
+    let has_choices = spec.servers.len() > 1
+        || spec
+            .servers
+            .get(choice.server)
+            .is_some_and(|s| s.variables.iter().any(|v| v.options.len() > 1));
+    if has_choices {
+        ui.add_enabled_ui(!overridden, |ui| {
+            // Only combo boxes (labels inside them), top-aligned: a centered
+            // wrapping row steps each one down as the row grows.
+            let row = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 0.0), row, |ui| {
+                if spec.servers.len() > 1 {
+                    let label = |i: usize| {
+                        let s = &spec.servers[i];
+                        let text = if s.description.is_empty() {
+                            s.url.clone()
+                        } else {
+                            format!("{} · {}", s.description, s.url)
+                        };
+                        crate::core::clip(&text, 70)
+                    };
+                    egui::ComboBox::from_id_salt("openapi_server")
+                        .selected_text(format!("Server: {}", label(choice.server)))
+                        .truncate()
+                        .width(300.0)
+                        .show_ui(ui, |ui| {
+                            for i in 0..spec.servers.len() {
+                                if ui.selectable_label(choice.server == i, label(i)).clicked() {
+                                    choice = ServerChoice::defaults(spec, i);
+                                }
+                            }
+                        });
+                }
+                if let Some(server) = spec.servers.get(choice.server) {
+                    for (i, var) in server.variables.iter().enumerate() {
+                        if var.options.len() < 2 {
+                            continue;
+                        }
+                        let current = choice.values.get(i).cloned().unwrap_or_default();
+                        egui::ComboBox::from_id_salt(("openapi_server_var", choice.server, i))
+                            .selected_text(format!(
+                                "{}: {}",
+                                var.name,
+                                crate::core::clip(&current, 40)
+                            ))
+                            .show_ui(ui, |ui| {
+                                for option in &var.options {
+                                    if ui
+                                        .selectable_label(
+                                            *option == current,
+                                            crate::core::clip(option, 60),
+                                        )
+                                        .clicked()
+                                        && let Some(value) = choice.values.get_mut(i)
+                                    {
+                                        value.clone_from(option);
+                                    }
+                                }
+                            });
+                    }
+                }
+            });
+        });
+    }
+    if choice != picker.choice {
+        picker.choice = choice;
+        picker.select_server(base_override);
+    }
+    match &picker.base {
+        Ok(base) => {
+            let source = if overridden {
+                "Base URL field"
+            } else {
+                "document"
+            };
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Requests go to").color(p.muted));
+                ui.label(RichText::new(base).monospace().size(12.0));
+                ui.label(RichText::new(format!("({source})")).small().color(p.muted));
+            });
+        }
+        Err(e) => {
+            ui.colored_label(p.error, e);
+        }
+    }
+    if picker.spec.referenced_files > 0 {
+        ui.label(
+            RichText::new(format!(
+                "Read {} referenced file(s) from the document's folder",
+                picker.spec.referenced_files
+            ))
+            .small()
+            .color(p.muted),
+        );
+    }
+}
+
 /// The OpenAPI operation list: filters, Select all / None for the filtered
 /// operations, one checkbox per operation, the selection count against the
 /// plan limit and the warnings for the selection.
@@ -399,9 +521,10 @@ fn picker_ui(ui: &mut egui::Ui, picker: &mut Picker, p: Palette, kept: usize, fi
             selected.len()
         ));
     });
-    // Height left for the list and the warnings so the dialog fits the window.
-    let above = ui.cursor().top() - ui.min_rect().top();
-    let budget = (ui.ctx().content_rect().height() - above - 150.0).clamp(140.0, 400.0);
+    // Height left on screen below this point for the list and the warnings, so
+    // the dialog (with the server row above) still fits a short window.
+    let left = ui.ctx().content_rect().bottom() - ui.cursor().top() - 48.0;
+    let budget = left.clamp(90.0, 400.0);
     if visible.is_empty() {
         ui.label(RichText::new("No operations match the filters").color(p.muted));
     } else {

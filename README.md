@@ -240,15 +240,31 @@ the requests and warnings, then add them to the plan or replace its requests.
   work in the current session but are never saved, like any other secret. A
   secret that is exactly one `{{variable}}` reference is saved as that reference.
 - **OpenAPI (JSON)** takes the path of an OpenAPI 3.x or Swagger 2.0 JSON file.
-  **Preview** lists every GET/POST/PUT/PATCH/DELETE operation (by path, then
-  method) with its method, path, name and tags. Filter the list by text (path,
+  **Preview** lists every GET/POST/PUT/PATCH/DELETE operation in document order
+  (paths as written, methods as written within a path) with its method, path,
+  name and tags. Filter the list by text (path,
   name or operationId), method or tag; **Select all** and **None** apply to the
   operations the filters show. All operations start checked and only checked
   ones are imported. The dialog shows how many are selected and disables
   Import while the selection would take the plan past 500 requests.
-- The base URL comes from the first server (variables at their defaults)
-  unless you enter one, which is the usual way to aim a spec at a local or
-  staging target. Path parameters become `{{variables}}` added to the plan with
+- `$ref`s to other JSON files next to the document are followed, e.g.
+  `common.json#/components/schemas/Pet` or `./schemas/pet.json`, relative to
+  the file that contains the reference. Only files inside the document's folder
+  (and its subfolders) are read: `..` that leads outside, absolute paths and
+  symlinks pointing outside are refused. Nothing is downloaded: `http(s)`
+  references are listed and left unresolved. Each file may be up to 10 MiB and
+  at most 50 files are read; each is read once, so files that refer to each
+  other do not loop. Unresolved references are listed by name in the preview
+  (never with file contents) and the preview says how many files were read.
+- When the document lists several servers, or server variables with an
+  `enum`, the preview offers a dropdown for the server and for each such
+  variable, preselected with the first server and the defaults; a Swagger 2.0
+  document with several `schemes` offers a scheme dropdown. Changing them
+  updates the request URLs without reading the files again; the preview shows
+  where requests will go. A **Base URL** you enter wins over the selection,
+  which is the usual way to aim a spec at another local or staging target.
+  Either way the URL must be absolute http(s) with a host and no credentials or
+  query. Path parameters become `{{variables}}` added to the plan with
   their example values; required query and header parameters use `example`,
   `examples`, `default` or `enum` values.
 - JSON bodies use the document's values (`example`, `examples`, `default`,

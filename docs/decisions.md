@@ -37,8 +37,9 @@
   guessed.
 - OpenAPI import reads JSON only (OpenAPI 3.x, Swagger 2.0) with serde_json, so
   no new dependency; YAML would need one and waits for a user decision. Local
-  `$ref`s are followed (depth 16). Operations come in path order (serde_json
-  maps are sorted; within a path GET/POST/PUT/PATCH/DELETE). Parameter values
+  `$ref`s are followed (depth 16). Operations come in document order: paths as
+  written, then methods as written within a path item (not a fixed method
+  order), because that is the order a reader sees in the file. Parameter values
   come only from the document's examples/defaults; missing ones are left empty
   and listed. Path parameters become plan variables (names sanitized to
   `[A-Za-z0-9_]`), so the URL keeps a fixed scheme and host. Bearer/OAuth
@@ -51,6 +52,43 @@
   warnings (only for the selected operations) without re-parsing. All
   operations start selected; Import is blocked while the selection would pass
   the 500-request plan limit, and `build` itself stops at 500.
+- Document order comes from serde_json's `preserve_order` feature (maps keep
+  insertion order; no new crate: `indexmap` and `foldhash` were already in
+  Cargo.lock). Audit of every `serde_json::Value`/`Map` use: plans, history,
+  reports and preferences serialize Rust structs, so their output is
+  unchanged; object equality (JSON assertions) ignores key order; JSON
+  pointers do not depend on order. Visible effects: OpenAPI operations, body
+  properties, `examples` ("the first example"), the first JSON media type,
+  security schemes within a requirement and `api_key_N` numbering now follow
+  the document; an extractor that captures a whole JSON object stores it in
+  the response's key order instead of sorted order.
+- External `$ref`s are bundled before parsing operations (`import/refs.rs`):
+  each referenced local file is read once, embedded in the document under
+  `x-rustload-files`, and every reference becomes a local `#/…` pointer, so the
+  sampler, cycle detection and resolution work unchanged. References resolve
+  relative to the file that contains them. Rules: no network ever (URLs are
+  listed, other schemes refused); paths are canonicalized and must stay inside
+  the document's canonical folder (refuses `..` escapes, absolute paths and
+  symlinks pointing outside); 10 MiB per file (checked before and while
+  reading); at most 50 files, taken in document order; files are cached by
+  canonical path, so mutual references cannot loop, and schema cycles across
+  files stop like local ones. Examples/defaults/enum/const values are data and
+  are not rewritten. Messages name the reference, never file contents. A
+  reference back to the root document by file name loads it as a separate
+  copy (the importer is given the folder, not the root file name). Parsing
+  goes through one `parse_document` function so a YAML reader can plug in.
+  `parse_openapi` (bytes only) lists external references instead of reading
+  them; `parse_openapi_in`/`load_openapi` take the folder.
+- Servers are part of the parsed spec (`OpenApiServer` with variables and
+  their `enum` options; Swagger 2.0 becomes one `{scheme}://host/basePath`
+  server whose `scheme` variable lists `schemes`). Operations keep their URL
+  path; `OpenApiSpec::select_server` derives the base URL from a
+  `ServerChoice` or the Base URL override (which wins when not blank) and
+  `build` prepends it, so the dialog changes servers without re-reading files.
+  A default missing from its `enum` is offered first. Validation is unchanged
+  (absolute http(s), host, no credentials, query or unresolved variables);
+  loading succeeds without a usable server, and Import stays disabled until a
+  base URL is valid.
 - JSON bodies: document values first; `allOf` merges members' properties,
   `required` and object examples; `oneOf`/`anyOf` take the first option.
   Otherwise type placeholders (required properties, or all when none is
@@ -62,8 +100,9 @@
 - Security requirements are alternatives: the first one RustLoad can fill
   completely wins, then an anonymous `{}` one, else the first one as far as
   possible. apiKey in a header or query becomes that field with `{{api_key}}`
-  (`api_key_2`… by scheme-name order) and a secret plan variable; apiKey in a
-  cookie is only listed because there is no cookie support.
+  (`api_key_2`… in the order the schemes are defined) and a secret plan
+  variable; apiKey in a cookie is only listed because there is no cookie
+  support.
 - Warmup is None, Duration{secs} or Requests{count}. A request is classified by
   its start: started during warmup means excluded from every result metric
   (counts, histograms, statuses, endpoints, bytes) and counted in separate
