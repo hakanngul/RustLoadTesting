@@ -20,6 +20,30 @@ interval, and a trailing-5s Data/sec rate (cards, endpoint table, reports).
 Suite: **30 passed** (11 core/report, 9 dashboard-layout, 10 engine). Format,
 strict all-target Clippy and build pass. Linux only; macOS CI separate.
 
+## Release automation configuration
+
+Added a tag-triggered release workflow for Linux x64, Windows x64, macOS ARM64,
+and macOS x64. It validates the tag against Cargo.toml, tests each target before
+packaging, requires all four packages before publication, and creates SHA-256
+checksums. Native Windows release builds use the GUI subsystem and static MSVC
+runtime; macOS packaging derives the app version from Cargo metadata.
+
+Local checks for this change:
+
+- actionlint 1.7.12: both CI and release workflows pass.
+- Bash syntax checks: macOS script and embedded workflow Bash steps pass.
+- Executed tag validation, version matching, prerelease detection, checksum
+  generation, and rejection of missing/extra packages with temporary fixtures.
+- Format, strict all-target Clippy, **27 tests**, and optimized release build pass.
+- Ran the workflow's Linux packaging step against the real optimized binary.
+  Verified archive contents, executable permissions, binary hash, and local shared
+  libraries. The extracted app opened a native Xvfb window and exited cleanly.
+
+These checks do not execute the macOS/Windows build jobs or GitHub publication.
+Those require the first release workflow run. Native UI acceptance, Developer ID
+signing, Apple notarization, and Windows publisher signing remain separate checks.
+See [releases](releases.md) for the tag and download procedure.
+
 ## Pacing accuracy and metrics lock update
 
 The global gate now advances from its schedule instead of the wake-up time, so
@@ -134,7 +158,7 @@ bucket, 98 logs**, with all conservation checks passing.
 ## Remaining release checks
 
 - **macOS native launch, manual acceptance and .app packaging are unrun.** A macOS
-  machine is required. Signing/notarization is not configured.
+  machine is required. Developer ID signing/notarization is not configured.
 - Windows execution and packaging are unrun. CI definitions have been added;
   remote workflow results must be checked on GitHub separately from these local checks.
 - 1,000-VU capacity and long-running renderer RSS are not benchmarked. The local

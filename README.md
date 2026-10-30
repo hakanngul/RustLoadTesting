@@ -40,6 +40,15 @@ before planning a release.
 
 ## Get started
 
+### Download a release
+
+When a version is published, [GitHub Releases](https://github.com/hakanngul/RustLoadTesting/releases)
+contains macOS DMGs for Apple Silicon and Intel, a Windows x64 ZIP, a Linux x64
+archive, and SHA-256 checksums. See the [release guide](docs/releases.md) for
+installation requirements, signing status, and publishing steps.
+
+### Build from source
+
 Install Rust through [rustup](https://rustup.rs), then clone the repository:
 
 ```sh
@@ -288,10 +297,15 @@ before changing execution or measurement behavior.
 | macOS | Product target; native launch, manual acceptance, and app packaging still need verification |
 | Windows | Execution and packaging have not been verified |
 
-On a Mac, `bash scripts/package-macos.sh` builds an unsigned `dist/RustLoad.app`.
-The script has only had its syntax checked in the Linux environment. Signing,
-notarization, and distribution are not configured. CI defines Linux and macOS
-jobs; check the actual workflow results separately.
+The [release workflow](.github/workflows/release.yml) tests, builds, and packages
+all three operating systems when a version tag is pushed. It publishes only after
+all four target builds pass. Check the actual Actions results separately from the
+local validation record.
+
+On a Mac, `bash scripts/package-macos.sh` builds an ad-hoc signed
+`dist/RustLoad.app`. Developer ID signing, Apple notarization, and Windows
+publisher certificates are not configured. Native platform UI acceptance remains
+a separate check; see [releases](docs/releases.md).
 
 Capacity at 1,000 users and long-running renderer memory use have not been
 benchmarked. Flow, Pause, templates, browser emulation, histogram visualization,
@@ -307,4 +321,5 @@ implementation.
 - [Widgets and personal layouts](docs/widgets.md)
 - [Test plan](docs/test-plan.md)
 - [Validation evidence and remaining release checks](docs/validation.md)
+- [Release packages and publishing](docs/releases.md)
 - [Original product requirements](docs/original-prd.md)

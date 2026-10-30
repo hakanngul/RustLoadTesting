@@ -1,0 +1,286 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to build, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Validate version tag
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Validate tag format
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo 'Expected a version tag such as v0.1.0 or v0.2.0-rc.1.' >&2
+            exit 1
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Match tag to Cargo version
+        id: version
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          tag = os.environ['RELEASE_TAG']
+          if tag != f'v{version}':
+              raise SystemExit(f'Tag {tag} does not match Cargo.toml version {version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'prerelease={str("-" in version).lower()}\n')
+          PY
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: Windows x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - platform: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+          - platform: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install Linux build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev libudev-dev
+
+      - name: Use static MSVC runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets --target ${{ matrix.target }} -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --target ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package="RustLoad-${RELEASE_TAG}-linux-x86_64"
+          mkdir -p "dist/$package"
+          cp "target/${{ matrix.target }}/release/rustload" "dist/$package/rustload"
+          chmod 755 "dist/$package/rustload"
+          cat > "dist/$package/README.txt" <<'EOF'
+          RustLoad for Linux x64
+
+          Extract the archive, open a terminal in this folder, and run ./rustload.
+          Requires Ubuntu 22.04 or a compatible newer glibc system, a graphical
+          session, OpenGL, and X11/Wayland with xkbcommon runtime libraries.
+          Test only targets you have permission to test.
+
+          Documentation: https://github.com/hakanngul/RustLoadTesting#readme
+          EOF
+          tar -czf "dist/$package.tar.gz" -C dist "$package"
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $package = "RustLoad-$env:RELEASE_TAG-windows-x86_64"
+          New-Item -ItemType Directory -Force "dist/$package" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/rustload.exe" "dist/$package/RustLoad.exe"
+          @'
+          RustLoad for Windows x64
+
+          Extract the ZIP and open RustLoad.exe. A graphics driver with OpenGL
+          support is required. This application has no publisher certificate;
+          Windows may show an unrecognized-app warning.
+          Test only targets you have permission to test.
+
+          Documentation: https://github.com/hakanngul/RustLoadTesting#readme
+          '@ | Set-Content -Encoding utf8 "dist/$package/README.txt"
+          Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip" -Force
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/package-macos.sh "${{ matrix.target }}"
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) arch=arm64 ;;
+            x86_64-apple-darwin) arch=x86_64 ;;
+            *) exit 1 ;;
+          esac
+          mkdir -p dist/dmg
+          mv dist/RustLoad.app dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname RustLoad -srcfolder dist/dmg -ov -format UDZO \
+            "dist/RustLoad-${RELEASE_TAG}-macos-${arch}.dmg"
+          hdiutil verify "dist/RustLoad-${RELEASE_TAG}-macos-${arch}.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustload-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rustload-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify asset set and create SHA-256 checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          tag = os.environ['RELEASE_TAG']
+          root = Path('dist')
+          expected = {
+              f'RustLoad-{tag}-linux-x86_64.tar.gz',
+              f'RustLoad-{tag}-windows-x86_64.zip',
+              f'RustLoad-{tag}-macos-arm64.dmg',
+              f'RustLoad-{tag}-macos-x86_64.dmg',
+          }
+          actual = {path.name for path in root.iterdir()}
+          if actual != expected:
+              raise SystemExit(f'Unexpected release assets: missing={expected - actual}, extra={actual - expected}')
+          with (root / 'SHA256SUMS.txt').open('w', newline='\n') as output:
+              for name in sorted(expected):
+                  digest = hashlib.sha256()
+                  with (root / name).open('rb') as asset:
+                      for chunk in iter(lambda: asset.read(1024 * 1024), b''):
+                          digest.update(chunk)
+                  output.write(f'{digest.hexdigest()}  {name}\n')
+          PY
+
+      - name: Create or update release
+        shell: bash
+        run: |
+          cat > /tmp/rustload-release-notes.md <<'EOF'
+          ## Downloads
+
+          | Platform | Download |
+          | --- | --- |
+          | macOS 12+ / Apple Silicon (M-series) | `macos-arm64.dmg` |
+          | macOS 12+ / Intel | `macos-x86_64.dmg` |
+          | Windows x64 | `windows-x86_64.zip` |
+          | Linux x64 / Ubuntu 22.04 or compatible | `linux-x86_64.tar.gz` |
+
+          **macOS:** open the DMG and drag RustLoad to Applications. The app is
+          ad-hoc signed and has no Apple notarization. macOS may block the first
+          launch; review the download, then use Privacy & Security > Open Anyway.
+
+          **Windows:** extract the ZIP and open RustLoad.exe. This build has no
+          publisher certificate, so SmartScreen may show a warning.
+
+          **Linux:** extract the archive and run ./rustload from its directory.
+          A graphical session, OpenGL, and X11/Wayland runtime libraries are needed.
+
+          SHA256SUMS.txt lists the SHA-256 checksum of each platform package.
+          These builds run automated tests; platform UI acceptance is a separate
+          check. Start with Local Demo before testing your own authorized targets.
+
+          EOF
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            flags=()
+            if [[ "$PRERELEASE" == true ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" dist/* --verify-tag \
+              --title "RustLoad $RELEASE_TAG" --generate-notes \
+              --notes-file /tmp/rustload-release-notes.md "${flags[@]}"
+          fi
