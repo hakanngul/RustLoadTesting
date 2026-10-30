@@ -201,6 +201,26 @@ row throughout the run; row reuse is opt-in, and duplicate headers are rejected.
 Relative CSV paths resolve against the saved plan's directory. For an unsaved
 plan, they resolve against the process working directory.
 
+### Import from cURL or HAR
+
+**Import…** in the toolbar builds requests from your browser. Paste one or more
+commands from DevTools → *Copy as cURL (bash)* (or *Copy all as cURL*), or give
+the path of a HAR file saved from DevTools → Network → *Save all as HAR*. Preview
+the requests and warnings, then add them to the plan or replace its requests.
+
+- URL query parameters move to Params; credentials in a URL become Basic Auth.
+- `-H`, `-X`, `-d`/`--data-raw`/`--data-binary`/`--data-urlencode`, `--json`,
+  `-u`, `-G`, `-b`, `-A`, `-e` and `--url` are understood. A JSON body with a JSON
+  content type becomes a JSON body.
+- Connection headers, `Content-Length` and `Accept-Encoding` are removed:
+  responses are read uncompressed so sizes and extraction stay exact.
+- `-k`, `-L`, `-F`, `-T`, `@file` data and HEAD/OPTIONS requests are not imported;
+  the preview lists what was skipped and why.
+- HAR import can keep only XHR/fetch requests. Only requests are read; HAR
+  responses are never imported. Files up to 50 MiB, at most 500 requests.
+- Authorization, Cookie and other credential values are marked secret: they
+  work in the current session but are never saved, like any other secret.
+
 ### SLO thresholds
 
 Add pass/fail objectives under **Users & plan settings** (Studio) or the **SLO

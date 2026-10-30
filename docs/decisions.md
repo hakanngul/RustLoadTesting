@@ -28,6 +28,13 @@
   (default ±2 %, a UI preference) marks small changes Unchanged; it is not a
   significance test. Data rate is informational. Endpoints match by request ID.
   Differing setups or non-Completed runs produce warnings, not refusals.
+- cURL/HAR import is a pure parser (own bash tokenizer: '…', "…", $'…',
+  backslash continuations; no new dependency). It never executes commands,
+  reads referenced files or imports HAR responses. Query parameters become
+  Params, URL credentials Basic Auth; connection headers, Content-Length and
+  Accept-Encoding are dropped (responses are not decompressed). Credential
+  headers stay session-only secrets. Unsupported options are listed, not
+  guessed. OpenAPI import is a later step.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.

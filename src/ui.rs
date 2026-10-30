@@ -1,5 +1,6 @@
 mod compare;
 mod dashboard;
+mod import;
 mod studio2;
 
 use crate::dashboard::{DashboardPage, Dashboards, Dock, Span, Widget, WidgetKind};
@@ -90,6 +91,7 @@ pub struct RustLoadApp {
     memory: u64,
     compare_base: Option<String>,
     comparison: Option<compare::ComparisonView>,
+    import: Option<import::ImportDialog>,
 }
 impl RustLoadApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -147,6 +149,7 @@ impl RustLoadApp {
             memory: 0,
             compare_base: None,
             comparison: None,
+            import: None,
         };
         theme::apply(&cc.egui_ctx, !app.prefs.light);
         app.refresh_history();
@@ -366,6 +369,13 @@ impl RustLoadApp {
                         if ui.button("Save as…").clicked() {
                             self.file_action = Some(FileAction::Save);
                             self.dialog_path = self.prefs.plan_path.clone();
+                        }
+                        if ui
+                            .button("Import…")
+                            .on_hover_text("Add requests from Copy as cURL or a HAR file")
+                            .clicked()
+                        {
+                            self.import.get_or_insert_with(Default::default);
                         }
                         if ui
                             .add_enabled(!self.dirty, egui::Button::new("Local Demo"))
@@ -1201,6 +1211,7 @@ impl eframe::App for RustLoadApp {
             }
         }
         self.dialogs(ctx);
+        self.import_dialog(ctx, p);
         self.dashboard_manager(ctx, p);
         if self.layout_save_requested {
             if let Some(storage) = frame.storage_mut() {
