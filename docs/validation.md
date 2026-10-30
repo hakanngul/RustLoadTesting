@@ -1,5 +1,21 @@
 # Validation evidence
 
+## Pacing accuracy and metrics lock update
+
+The global gate now advances from its schedule instead of the wake-up time, so
+millisecond timer rounding no longer lowers the achieved rate; at most 10 ms of
+lag is caught up, and no burst credit accumulates. Response bodies are parsed at
+most once, before the shared metrics lock is taken.
+
+Local fixture, 200 VUs, 5 seconds, release build, achieved starts/sec:
+limit 500 → before **320**, after **500**; 1,000 → **469** / **1,000**;
+2,000 → **654** / **1,998**; 5,000 → **769** / **4,994**. Debug builds matched.
+New test `pacing_reaches_limits_above_timer_resolution` (500 RPS, 2 s, expects
+900–1,005 starts) fails on the previous gate (626 starts) and passes now.
+
+Current suite: **27 passed** (9 core/report, 9 dashboard-layout, 9 engine).
+Format, strict all-target Clippy and build pass. Linux only; macOS CI separate.
+
 ## Personal widget layouts update
 
 Current suite: **26 passed** (9 core/report, 9 dashboard-layout, 8 real HTTP engine
