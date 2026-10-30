@@ -396,11 +396,25 @@ async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
         let mut assertion_failed = false;
         let mut status_failed = false;
         let mut extracted = Variables::new();
+        // First failure reason, sanitized: never response content or error text.
+        let mut reason = match &result {
+            Err(Failure::Cancelled) | Ok(_) => None,
+            Err(e) => Some(e.label().to_owned()),
+        };
         if let Ok((status, body, _)) = &result {
             status_failed = request
                 .assertions
                 .status
                 .map_or(!(200..300).contains(status), |expected| expected != *status);
+            if status_failed {
+                reason = Some(
+                    core::AssertionFailure::Status {
+                        actual: *status,
+                        expected: request.assertions.status,
+                    }
+                    .reason(),
+                );
+            }
             let json =
                 if request.assertions.json_pointer.is_empty() && request.extractors.is_empty() {
                     None
@@ -409,12 +423,15 @@ async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
                 };
             let mut content_assertions = request.assertions.clone();
             content_assertions.status = Some(*status);
-            assertion_failed = !core::evaluate_parsed(
+            if let Some(failure) = core::assertion_failure(
                 &content_assertions,
                 *status,
                 elapsed_us.div_ceil(1000),
                 json.as_ref(),
-            );
+            ) {
+                assertion_failed = true;
+                reason.get_or_insert_with(|| failure.reason());
+            }
             for e in &request.extractors {
                 match json.as_ref().and_then(|json| json.pointer(&e.pointer)) {
                     Some(serde_json::Value::String(s)) => {
@@ -425,6 +442,9 @@ async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
                     }
                     None => {
                         assertion_failed = true;
+                        reason.get_or_insert_with(|| {
+                            format!("Extraction found nothing at {}", core::clip(&e.pointer, 80))
+                        });
                     }
                 }
             }
@@ -459,6 +479,9 @@ async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
                 assertion_failed,
                 status_failed,
             );
+            if let (false, Some(reason)) = (success, &reason) {
+                m.record_error(request.id, reason.clone(), c.began.elapsed().as_secs_f64());
+            }
         }
         let logged = if warm {
             m.warmup.completed
@@ -468,14 +491,14 @@ async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
         if !success || logged.is_multiple_of(100) {
             let label = match &result {
                 Ok((status, _, _)) => format!(
-                    "{}Request #{} · HTTP {} · {} · {:.1} ms",
+                    "{}Request #{} · {} · {:.1} ms",
                     if warm { "Warmup · " } else { "" },
                     request.id,
-                    status,
-                    if success {
-                        "passed"
-                    } else {
-                        "expectation/extraction failed"
+                    match (success, &reason) {
+                        // A status reason already names the status.
+                        (false, Some(reason)) if status_failed => reason.clone(),
+                        (false, Some(reason)) => format!("HTTP {status} · {reason}"),
+                        _ => format!("HTTP {status} · passed"),
                     },
                     elapsed_us as f64 / 1000.0
                 ),
@@ -483,7 +506,7 @@ async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
                     "{}Request #{} · {}",
                     if warm { "Warmup · " } else { "" },
                     request.id,
-                    e.label()
+                    reason.as_deref().unwrap_or(e.label())
                 ),
             };
             m.log(
@@ -603,7 +626,7 @@ async fn permit(c: &Context) -> bool {
 enum Failure {
     Cancelled,
     Timeout,
-    Network,
+    Network(Network),
     BodyTooLarge,
     Template,
 }
@@ -612,9 +635,51 @@ impl Failure {
         match self {
             Self::Cancelled => "Cancelled",
             Self::Timeout => "Timeout",
-            Self::Network => "Network/TLS/body transport failure",
+            Self::Network(cause) => cause.label(),
             Self::BodyTooLarge => "ResponseTooLarge",
             Self::Template => "Invalid template, URL or header (check variables)",
+        }
+    }
+}
+/// Transport failure cause, derived from error kinds only: reqwest's error
+/// text can contain the request URL, so it is never shown or stored.
+#[derive(Debug, Clone, Copy)]
+enum Network {
+    Refused,
+    Closed,
+    Connect,
+    BodyRead,
+    Other,
+}
+impl Network {
+    fn classify(e: &reqwest::Error) -> Self {
+        let mut source = std::error::Error::source(e);
+        while let Some(err) = source {
+            if let Some(io) = err.downcast_ref::<std::io::Error>() {
+                use std::io::ErrorKind::*;
+                match io.kind() {
+                    ConnectionRefused => return Self::Refused,
+                    ConnectionReset | ConnectionAborted | BrokenPipe | UnexpectedEof => {
+                        return Self::Closed;
+                    }
+                    _ => {}
+                }
+            }
+            source = err.source();
+        }
+        if e.is_connect() {
+            Self::Connect
+        } else {
+            Self::Other
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Refused => "Connection refused",
+            Self::Closed => "Connection reset or closed",
+            Self::Connect => "Connection failed (DNS, TLS or TCP)",
+            Self::BodyRead => "Response body read failed",
+            Self::Other => "Request failed before a response",
         }
     }
 }
@@ -647,7 +712,7 @@ fn apply_count(
     match result {
         Ok((400..=599, _, _)) => count.http_errors += 1,
         Err(Failure::Timeout) => count.timeouts += 1,
-        Err(Failure::Network) => count.network_errors += 1,
+        Err(Failure::Network(_)) => count.network_errors += 1,
         Err(Failure::BodyTooLarge) => count.body_errors += 1,
         Err(Failure::Template) => count.preparation_errors += 1,
         _ => {}
@@ -712,7 +777,7 @@ async fn execute(
             if e.is_timeout() {
                 Failure::Timeout
             } else {
-                Failure::Network
+                Failure::Network(Network::classify(&e))
             }
         })?;
         let status = response.status().as_u16();
@@ -724,7 +789,11 @@ async fn execute(
             return Err(Failure::BodyTooLarge);
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| Failure::Network)? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| Failure::Network(Network::BodyRead))?
+        {
             if body.len().saturating_add(chunk.len()) > limit {
                 return Err(Failure::BodyTooLarge);
             }

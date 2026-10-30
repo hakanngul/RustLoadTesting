@@ -163,7 +163,9 @@ test ve belgeleri aynı kapsamda güncelle.
 Token, parola, Authorization/Cookie ve secret işaretli alanların gerçek değerlerini
 plan, geçmiş, log, rapor, ekran görüntüsü veya Git'e yazma. Mevcut secret-safe
 serde/redaction davranışını kullan; `{{access_token}}` gibi değişken referanslarını
-bozma. Response body'lerini loglama. HTML escape ve CSV formula-injection
+bozma. Response body'lerini loglama. Hata nedenleri (log ve `errors` grupları)
+yalnızca durum kodu, plan değerleri ve sabit etiketlerden oluşur; reqwest hata
+metni URL içerebildiği için gösterilmez/saklanmaz. HTML escape ve CSV formula-injection
 korumalarını koru. Auth/request verilerini dashboard tercihlerine ekleme.
 
 Model/tercih/SQLite değişikliklerinde eski dosyaları okuyabilmeyi düşün; gerekiyorsa

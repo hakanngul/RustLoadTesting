@@ -1315,7 +1315,43 @@ fn status_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
                 "Iterations not started because every VU was busy. Raise Max VUs if this grows.",
             );
         }
+        failure_reasons(ui, s, p);
     });
+}
+/// Most frequent measured failure groups (request + sanitized reason).
+fn failure_reasons(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
+    const SHOWN: usize = 5;
+    if s.errors.is_empty() {
+        return;
+    }
+    ui.separator();
+    ui.label(RichText::new("Failure reasons · measured, most frequent first").small());
+    for g in s.errors.iter().take(SHOWN) {
+        let text = format!("{} · {}", scope_label(s, Some(g.request_id)), g.reason);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(g.count.to_string()).small().color(p.error));
+            ui.add(egui::Label::new(RichText::new(&text).small()).truncate())
+                .on_hover_text(format!(
+                    "{text}\nFirst at {:.1}s, latest at {:.1}s",
+                    g.first_at, g.last_at
+                ));
+        });
+    }
+    let hidden = s.errors.len().saturating_sub(SHOWN);
+    if hidden > 0 || s.errors_overflow > 0 {
+        ui.label(
+            RichText::new(format!(
+                "{hidden} more reason groups{} · full list in the JSON/HTML report",
+                if s.errors_overflow > 0 {
+                    format!(" · {} failures beyond the group limit", s.errors_overflow)
+                } else {
+                    String::new()
+                }
+            ))
+            .small()
+            .color(p.muted),
+        );
+    }
 }
 fn endpoint_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
     theme::panel(p).show(ui, |ui| {

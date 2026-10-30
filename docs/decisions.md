@@ -50,6 +50,14 @@
   ramp-down lets the current iteration finish. Stages derive the peak users and
   total duration; at most 20 stages. The editor offers a table and draggable
   points; axis bounds freeze during a drag.
+- Failures are grouped by (request, reason) with the first reason in a fixed
+  order: transport failure, unexpected status, latency limit, JSON assertion,
+  extraction. One group per failure, so group counts plus the overflow equal the
+  measured failed count; warmup failures are not grouped. Transport causes come
+  from reqwest/io error kinds (refused; reset/aborted/broken pipe/EOF; connect;
+  body read; other), never the error's text, because it can contain the URL.
+  JSON pointers are plan text and are clipped to 80 characters. At most 100
+  groups; later new reasons only increment an overflow counter.
 - The latency distribution widget reads `Snapshot.latency_distribution`: the
   whole-run (measured) histogram in at most 40 log-spaced buckets between its
   minimum and maximum, built from recorded values so counts sum to the sample

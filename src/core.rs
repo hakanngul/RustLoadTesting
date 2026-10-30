@@ -677,15 +677,66 @@ pub fn evaluate_parsed(
     ms: u64,
     json: Option<&serde_json::Value>,
 ) -> bool {
+    assertion_failure(assertions, status, ms, json).is_none()
+}
+
+/// The first assertion a response fails, checked as status, time, then JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssertionFailure {
+    Status { actual: u16, expected: Option<u16> },
+    Slower { max_ms: u64 },
+    Json { pointer: String },
+}
+impl AssertionFailure {
+    /// Failure reason built from the plan and status code only, never from
+    /// response content.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Status {
+                actual,
+                expected: Some(expected),
+            } => format!("HTTP {actual}, expected {expected}"),
+            Self::Status { actual, .. } => format!("HTTP {actual}, expected 2xx"),
+            Self::Slower { max_ms } => format!("Slower than the {max_ms} ms limit"),
+            Self::Json { pointer } => {
+                format!("JSON at {} did not match", clip(pointer, 80))
+            }
+        }
+    }
+}
+pub fn assertion_failure(
+    assertions: &Assertions,
+    status: u16,
+    ms: u64,
+    json: Option<&serde_json::Value>,
+) -> Option<AssertionFailure> {
     let status_ok = assertions
         .status
         .map_or((200..300).contains(&status), |expected| expected == status);
-    let time_ok = assertions.max_ms.is_none_or(|max| ms <= max);
+    if !status_ok {
+        return Some(AssertionFailure::Status {
+            actual: status,
+            expected: assertions.status,
+        });
+    }
+    if let Some(max_ms) = assertions.max_ms.filter(|max| ms > *max) {
+        return Some(AssertionFailure::Slower { max_ms });
+    }
     let json_ok = assertions.json_pointer.is_empty()
         || json.is_some_and(|json| {
             serde_json::from_str::<serde_json::Value>(&assertions.json_expected)
                 .ok()
                 .is_some_and(|v| json.pointer(&assertions.json_pointer) == Some(&v))
         });
-    status_ok && time_ok && json_ok
+    (!json_ok).then(|| AssertionFailure::Json {
+        pointer: assertions.json_pointer.clone(),
+    })
+}
+
+/// At most `max` characters, with an ellipsis when cut.
+pub fn clip(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
+    }
 }
