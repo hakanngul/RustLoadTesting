@@ -1,143 +1,307 @@
 # RustLoad
 
-Native **Rust + egui/eframe** HTTP load testing desktop. Local-first Studio and
-Monitor, real Tokio/reqwest traffic, SQLite history, offline reports, Dark/Light.
-No browser frontend, backend service, account or Docker required.
+RustLoad is a desktop app for testing HTTP APIs under load. You can build a
+sequence of requests, run it with concurrent virtual users, and inspect response
+times, throughput, and failures as the test runs.
 
-**Studio 2** is an alternative layout based on the split-editor reference:
-test tree, request form, simultaneous Body/Load editors, right-hand live cards and
-bottom graphs/logs. Both Studio layouts share the same plan and engine.
-See [Studio 2](docs/studio2.md) for behavior and screenshots.
+The app is written in Rust with egui/eframe. The load engine runs on your machine,
+with SQLite history and offline reports. You do not need an account, a separate
+backend service, or Docker.
 
-Studio 2 now includes **personal widget layouts**: hide/restore, drag to reorder,
-move between docks, adjust grid widths, and save named pages. Create a blank
-dashboard-only page to build an analytics screen from the seven-widget catalog.
-Start with **Edit layout**, **+ Widget** or **Layouts…**, then **Save layout**.
-See [widgets and personal pages](docs/widgets.md).
+[Get started](#get-started) · [Workspaces](#workspaces) ·
+[Custom dashboards](#custom-dashboards) · [Measurements](#how-results-are-measured) ·
+[Development](#development)
 
-## Run
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/monitor-light.png">
+  <img src="docs/screenshots/monitor-dark.png" alt="RustLoad Monitor showing a completed local test with latency percentiles, request rates, HTTP status counts, endpoint results, and logs">
+</picture>
 
-Install Rust with [rustup](https://rustup.rs). From this checkout:
+*Monitor after a local demo run. Screenshots in this README were captured from
+the native Linux app using the bundled HTTP fixture.*
+
+## What you can do
+
+| Task | Available in RustLoad |
+| --- | --- |
+| Build an HTTP scenario | Sequential GET, POST, PUT, PATCH, and DELETE requests; headers, query parameters, raw or JSON bodies, Basic and Bearer auth |
+| Pass data between requests | Variables, per-user CSV rows, and JSON Pointer extraction for values such as access tokens |
+| Check responses | Expected status codes, response-time limits, and JSON Pointer equality assertions |
+| Configure load | Concurrent users, constant or linear ramp-up profiles, total duration, think time, timeouts, and a global request-start limit |
+| Follow a run | Request rates, latency percentiles, active users, HTTP status counts, endpoint summaries, and filtered logs |
+| Arrange your workspace | Two Studio layouts, named widget pages, drag-to-reorder controls, adjustable widths, and Dark/Light themes |
+| Keep results | Local SQLite history and HTML, JSON, or CSV exports |
+
+RustLoad is an MVP. Linux execution has been checked; macOS is the product target
+and still needs native acceptance testing. See [platform status](#platform-status)
+before planning a release.
+
+## Get started
+
+Install Rust through [rustup](https://rustup.rs), then clone the repository:
+
+```sh
+git clone https://github.com/hakanngul/RustLoadTesting.git
+cd RustLoadTesting
+```
+
+Run the desktop app:
 
 ```sh
 cargo run --locked
 ```
 
-`rust-toolchain.toml` selects Rust 1.99.1. The first build downloads the toolchain
-and crates. Cargo.lock captures resolved dependency versions. The desktop needs a
-native display and OpenGL. On Linux, X11/Wayland, xkbcommon and GL runtime libraries
-must be installed. On macOS, install Xcode Command Line Tools (`xcode-select
---install`) for the linker. macOS runtime acceptance remains a separate release
-check; see [validation](docs/validation.md).
+`rust-toolchain.toml` selects Rust 1.99.1. The first build downloads that toolchain
+and the dependencies pinned in `Cargo.lock`.
 
-## First real test: Local Demo
+You need a native display and OpenGL to open the app. Linux also needs the
+X11/Wayland, xkbcommon, and GL runtime libraries. On macOS, install Xcode Command
+Line Tools (`xcode-select --install`) for the linker.
 
-1. Open RustLoad and click **Local Demo** on a clean plan. It starts an HTTP
-   fixture on an ephemeral **127.0.0.1** port; no internet target is contacted.
-2. Review Login → List products → Checkout. Login extracts `/access_token`;
-   products uses `{{access_token}}`; checkout uses the `product_id` variable.
-3. Confirm target authorization in Studio's right panel, then **Run Test**.
-4. Monitor shows real responses, independent interval percentiles, users and logs.
-   The defaults are 10 users, 30 seconds, at most 20 starts/sec.
-5. Stop produces a partial Cancelled run. Natural expiry produces Completed.
-   Select a previous run to reopen its summary, or **Export Report** to HTML/JSON/CSV.
+### Try the local demo
 
-Save Local Demo plans if needed, but its ephemeral port changes after restarting
-the application. For a fixed-port fixture use:
+The demo gives you a working scenario without sending traffic to an external
+service.
+
+1. Open RustLoad and click **Local Demo** on a plan with no unsaved changes.
+   The app starts a test server on a temporary `127.0.0.1` port.
+2. Review the Login, List products, and Checkout requests. Login extracts
+   `/access_token`; the products request uses `{{access_token}}`, and checkout
+   uses the `product_id` variable.
+3. In Studio's load configuration panel, check **I am authorized to test all
+   targets in this plan.**, then click **Run Test**.
+4. Follow the results in Monitor. The demo uses 10 virtual users for 30 seconds,
+   with a limit of 20 HTTP request starts per second.
+5. Let it finish, or click **Stop** to keep a partial result. Use **Export Report**
+   to save HTML, JSON, or CSV, or reopen a run from the history sidebar.
+
+A saved demo plan still contains the temporary server port, which changes after
+restarting the app. For a server with a fixed port, run this in another terminal:
 
 ```sh
 cargo run --locked --example fixture
 ```
 
-It listens on 127.0.0.1:8080 until Ctrl-C. Replace target URLs accordingly.
+The fixture listens on `127.0.0.1:8080` until Ctrl-C. Update the plan's request URLs
+to use that address. For your own tests, use targets you have permission to test.
 
-## Studio
+## Workspaces
 
-- Five HTTP methods; query/header tables; raw or JSON body; Basic/Bearer auth.
-- Request context menu: reorder, duplicate, delete. Each request has a stable ID.
-- Assertions: expected status, response-time ceiling, JSON Pointer equality.
-- Extraction: RFC 6901 JSON Pointer (`/access_token`, `/items/0/id`); not JSONPath.
-- `{{variable}}` resolves in URLs (path/query), headers, body and auth. Scheme/host
-  cannot be variable. Missing variables fail the attempted step with a local
-  preparation error. Later steps in that iteration are skipped on any failure.
-- Plan & data: plan variables and CSV. CSV headers become user-local variables;
-  a row is assigned once per VU. Reuse is opt-in, duplicate headers are rejected.
-  Relative paths resolve against the saved plan's directory.
-- Save/Open use an explicit file-path window. Cmd/Ctrl+S saves, Cmd/Ctrl+O opens,
-  Cmd/Ctrl+Q requests a safe close. Schema version 1
-  is supported; unknown versions are rejected instead of silently migrated.
-- Close warns about unsaved changes and stops active work before exiting.
+### Studio
 
-Auth literal secrets and secret-marked fields are **not persisted**. Whole auth
-references such as `{{access_token}}` are preserved. Re-enter omitted values after
-opening a plan. Bodies are session-only unless “Persist body” is explicitly
-enabled; use secret variables instead of embedding credentials. History config
-snapshots omit request bodies and URL query strings. Responses are never logged.
+Studio is the main scenario editor. Choose a request in the left sidebar, edit
+its parameters in the center, and configure users and timing on the right.
+Right-click a request to reorder, duplicate, or delete it.
 
-## Measurement contract
+![Studio in Dark theme, with the request body editor and load configuration visible](docs/screenshots/studio-dark.png)
 
-This is a **closed-loop concurrent-user** generator, not an open arrival-rate
-generator. Think time follows each scenario iteration. Total duration includes
-linear ramp-up. A global gate spaces HTTP starts and does not accumulate burst
-credits. Per-user latency does not include time waiting for that gate.
+Both Studio layouts share the same test plan and selected request. Running a plan
+locks its configuration until the run ends. Starting from Studio opens Monitor;
+starting from Studio 2 keeps the workbench open.
 
-- Default expected status: 200–299; an explicit expected status overrides it.
-- Completed = successful + failed. Cancelled and in-flight are separate.
-- HTTP 4xx/5xx counts are independent: an expected 401 can be successful.
-- Latency starts at HTTP execution and ends after full body read. Network/timeouts
-  do not enter response histograms. P50/P90/P95/P99 use HDR histograms in microseconds.
-- Card percentiles are whole-run. Chart percentiles are independently calculated
-  intervals, never averaged. Empty samples display “—”.
-- RPS is completions/sec over a trailing five-second bucketed window (boundary
-  buckets are proportionally weighted). RPS limit caps starts, not completions.
-- Stop prevents new work, interrupts pacing/think waits, allows five seconds for
-  in-flight work, then cancels it. Final metrics are collected after users join.
-- No automatic retries, redirects or cookie management in v0.1. TLS verification
-  remains enabled. Inherited system HTTP proxy applies to remote requests;
-  literal loopback targets use a local client.
+### Studio 2
+
+Studio 2 keeps the request tree, HTTP editor, body, and load configuration visible
+together. Live metrics sit on the right, with charts and logs below. You can hide
+or move those widgets when you want more room for editing.
+
+![Studio 2 during a local run, showing the request tree, Body and Load Configuration panels, live metrics, and bottom charts](docs/screenshots/studio2-dark.png)
+
+On smaller windows, panels collapse or switch to tabs. See the
+[Studio 2 guide](docs/studio2.md) for layout behavior and a
+[compact-window screenshot](docs/screenshots/studio2-compact.png).
+
+### Monitor
+
+Monitor shows the current run's request rate, P50/P95/P99 latency, error rate,
+and request count. Charts track throughput, interval latency, and active users.
+HTTP status counts, endpoint results, and filterable logs help you inspect failures.
+Select a previous run in the sidebar to reopen its saved summary.
+
+Dark and Light themes are available throughout the app. You can also view
+[Studio in Light](docs/screenshots/studio-light.png),
+[Studio 2 in Light](docs/screenshots/studio2-light.png), and
+[Monitor in Light](docs/screenshots/monitor-light.png).
+
+## Custom dashboards
+
+In Studio 2, you can save different layouts for different tasks. Keep only a
+throughput chart while editing requests, or create a page dedicated to results.
+
+![A saved Performance dashboard with throughput, HTTP status distribution, active users, and logs](docs/screenshots/widgets-dashboard.png)
+
+To arrange the current page:
+
+1. Click **Edit layout** to show drag handles and widget controls.
+2. Use **+ Widget** to add a chart, table, log panel, or live metric group.
+3. Drag widgets to change their order. Use their menus to set row widths or move
+   them between the bottom and right panels in a workbench layout.
+4. Click **×** to hide a widget. You can bring it back through **Layouts…**.
+   Empty panels disappear, giving the space back to the editors.
+5. Click **Save layout** to save the arrangement on this device.
+
+For a separate page, open **Layouts…** and choose **Create blank page** or
+**Duplicate current page**. New blank pages use dashboard-only mode, which hides
+the request editor. You can rename pages and switch between them during a run.
+
+<details>
+<summary>See widget editing controls</summary>
+
+![Dashboard edit mode with drag handles, widget menus, and hide buttons](docs/screenshots/widgets-edit.png)
+
+</details>
+
+The catalog has seven widgets: throughput, latency, logs, active users, HTTP
+status distribution, endpoint breakdown, and live metrics. Each reads the current
+run. Multiple instances are allowed; log filtering and follow controls are shared
+between log widgets in this version.
+
+Layouts support up to 20 named pages and 16 widgets per page. Names must be unique
+and contain 1 to 60 characters. Layouts are saved separately from test plans;
+saving a plan JSON does not export your dashboard. The
+[widget guide](docs/widgets.md) covers sizing, restoring defaults, and persistence.
+External data sources, custom queries, plugins, and free pixel positioning are
+outside the current implementation.
+
+## Working with scenarios
+
+Use `{{variable}}` in URL paths and query values, headers, request bodies, or auth.
+The URL scheme and host must stay literal. A missing variable fails the attempted
+step with a local preparation error. Any failed step skips the remaining requests
+in that iteration.
+
+Extract response values with RFC 6901 JSON Pointer, such as `/access_token` or
+`/items/0/id`. Extraction uses JSON Pointer, not JSONPath. Assertions can check an
+expected status, a response-time ceiling, and JSON Pointer equality.
+
+CSV headers become variables local to each virtual user. A user keeps the same
+row throughout the run; row reuse is opt-in, and duplicate headers are rejected.
+Relative CSV paths resolve against the saved plan's directory. For an unsaved
+plan, they resolve against the process working directory.
+
+Plans use schema version 1. Unknown versions are rejected. Open and Save use a
+file-path window; Cmd/Ctrl+S saves, Cmd/Ctrl+O opens, and Cmd/Ctrl+Q requests a safe
+close. Closing warns about unsaved edits and stops active work before exiting.
+
+### Credentials and saved data
+
+Literal auth secrets and fields marked secret are omitted from saved plans,
+history, and reports. Auth fields containing only a variable reference, such as
+`{{access_token}}`, keep that reference. Re-enter omitted secret values when you
+reopen a plan.
+
+Request bodies stay in the session unless you enable the body-persistence option.
+Use secret variables for credentials instead of embedding them in a saved body.
+History configuration snapshots omit request bodies and URL query strings.
+Response bodies are never logged.
+
+## How results are measured
+
+RustLoad uses a closed-loop model: each virtual user runs the scenario in order,
+then waits for the configured think time before the next iteration. Total test
+duration includes ramp-up. It does not generate an independent open arrival rate.
+
+| Measurement | Meaning |
+| --- | --- |
+| Successful request | HTTP 200 to 299 by default, or the configured expected status, with all assertions and extractions passing |
+| Completed requests | Successful plus failed requests; cancellations and in-flight requests are counted separately |
+| Error rate | Failed requests divided by completed requests; cancellations are excluded |
+| HTTP error counts | Separate from success criteria: an expected 401 can pass while still appearing in the HTTP status counts |
+| Response latency | Time from HTTP execution through the full response-body read, excluding pacing and think time; network failures and timeouts do not enter response histograms |
+| Percentile cards | Whole-run HDR Histogram results |
+| Percentile charts | Independent interval histograms; percentiles are never averaged across intervals |
+| RPS card | Completions per second over a trailing five-second bucketed window, with proportionally weighted boundary buckets |
+| Global RPS limit | Scheduled HTTP starts across all users; timer lag catch-up is bounded to 10 ms, and idle time does not bank burst credits |
+
+P50/P90/P95/P99 use HDR histograms recorded in microseconds and displayed in
+milliseconds. Empty samples display a placeholder. **Stop** prevents new requests,
+interrupts pacing and think-time waits, and gives in-flight requests up to five
+seconds to finish before cancelling them. Final metrics are collected after the
+user tasks join. Stopping a run marks it **Cancelled**. A run that reaches its
+duration is **Completed**; an internal engine failure produces a **Failed** run.
+Natural expiry uses the same grace period.
+
+Version 0.1 does not retry requests, follow redirects, or manage cookies. TLS
+verification stays enabled. Remote requests use the inherited system HTTP proxy;
+literal loopback targets use a local client.
+
+Closed-loop tests can underrepresent latency when a target is overloaded
+(coordinated omission). Achieved throughput also depends on the load generator's
+CPU, scheduling, connections, and the target's behavior. CPU and RAM readings
+describe the RustLoad process, not the target server. Local Demo and the soak
+harness run their fixture in that same process, so those readings include it.
 
 ## Storage and limits
 
-History is in the platform local data directory under RustLoad (`history.sqlite3`);
-UI preferences use eframe's platform storage. SQLite receives aggregates during
-the run. Failed persistence is surfaced; current results remain available for export.
+Run history lives in `history.sqlite3` under RustLoad's platform local data
+directory. SQLite receives aggregates during the run and stores the final
+summary. If a write fails, the app reports it; the current results remain
+available for export. UI preferences use eframe's platform storage.
 
-Live graphs retain 900 points, logs 5,000 entries (2 KiB each). HTTP response cap is
-10 MiB by default, configurable to 100 MiB. Oversize responses fail explicitly.
-CSV and plan input files are capped at 16 MiB; a plan supports 500 request definitions.
-The UI validates at most 10,000 users and 100,000 RPS; those are configuration
-guards, **not verified capacity promises**. Benchmark on your own hardware.
+| Item | Limit |
+| --- | --- |
+| Live graph retention | 900 points |
+| Logs | 5,000 entries, up to 2 KiB per message |
+| Response body | 10 MiB by default, configurable up to 100 MiB; oversized responses fail explicitly |
+| Plan or CSV input file | 16 MiB |
+| Requests in a plan | 500 definitions |
+| Configuration bounds | Up to 10,000 virtual users and 100,000 request starts/sec |
 
-CPU/RAM displays describe the load-generator process, not the target. Closed-loop
-tests can underrepresent latency under overload (coordinated omission). Scheduling,
-connections, CPU and target behavior can all limit achieved throughput.
-Local Demo and the soak harness host the fixture in that same process, so their
-resource measurements also include the fixture server's overhead.
+The configuration bounds are input validation limits, not benchmark results.
+Measure capacity on your own hardware. HTML exports contain escaped structured
+results and time series; they do not include an interactive dashboard.
 
-## Development and validation
+## Development
+
+Run the checks from the repository root:
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked
+```
+
+Tests use local HTTP fixtures. For a 15-minute engine soak test:
+
+```sh
 cargo run --locked --example soak -- 900 /tmp/rustload-soak
 ```
 
-Tests use local fixtures only. The soak example records RSS/CPU and counters,
-checks count conservation and writes an offline JSON report. It does not measure
-the renderer's memory; use a native UI run for that.
+The soak harness records RSS, CPU, and counters, checks count conservation, and
+writes an offline JSON report. It exercises the engine and local fixture, not the
+renderer. Recorded commands and results are in [validation](docs/validation.md).
 
-Architecture and scope: [architecture](docs/architecture.md),
-[decisions](docs/decisions.md), [MVP](docs/MVP.md), [test plan](docs/test-plan.md).
+The engine runs on a separate Tokio runtime and publishes aggregate snapshots to
+the UI. Storage writes run on a dedicated worker. See
+[architecture](docs/architecture.md) and [implementation decisions](docs/decisions.md)
+before changing execution or measurement behavior.
 
-## Packaging and remaining platform checks
+### Platform status
 
-On a Mac, `bash scripts/package-macos.sh` builds an **unsigned** `dist/RustLoad.app`.
-The script must be run on macOS and has not been executed in the Linux development
-environment. Signing/notarization and distribution are not included. CI defines
-Linux/macOS build and test jobs; a workflow file is not evidence a remote job ran.
+| Platform | Status |
+| --- | --- |
+| Linux | Build, automated tests, and native UI checks recorded in the development environment |
+| macOS | Product target; native launch, manual acceptance, and app packaging still need verification |
+| Windows | Execution and packaging have not been verified |
 
-Flow, Pause, templates, browser emulation, histogram visualization, cookies,
-distributed workers and benchmark comparisons are outside this implementation.
-HTML reports contain complete escaped structured data, not an interactive dashboard.
+On a Mac, `bash scripts/package-macos.sh` builds an unsigned `dist/RustLoad.app`.
+The script has only had its syntax checked in the Linux environment. Signing,
+notarization, and distribution are not configured. CI defines Linux and macOS
+jobs; check the actual workflow results separately.
+
+Capacity at 1,000 users and long-running renderer memory use have not been
+benchmarked. Flow, Pause, templates, browser emulation, histogram visualization,
+cookie sessions, distributed workers, and benchmark comparisons are outside this
+implementation.
+
+## Documentation
+
+- [MVP scope](docs/MVP.md)
+- [Architecture](docs/architecture.md)
+- [Implementation decisions](docs/decisions.md)
+- [Studio 2](docs/studio2.md)
+- [Widgets and personal layouts](docs/widgets.md)
+- [Test plan](docs/test-plan.md)
+- [Validation evidence and remaining release checks](docs/validation.md)
+- [Original product requirements](docs/original-prd.md)
