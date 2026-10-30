@@ -22,6 +22,12 @@
   failed threshold fails the run; otherwise missing data is Inconclusive.
   Non-Completed runs carry a partial flag. Thresholds live in the plan (and its
   stored configuration); the verdict is persisted with the run summary.
+- Run comparison is a pure function over two saved summaries and their stored
+  configurations. Whole-run throughput/data use completed requests/bytes over
+  elapsed time; latency uses whole-run histograms. A relative noise band
+  (default ±2 %, a UI preference) marks small changes Unchanged; it is not a
+  significance test. Data rate is informational. Endpoints match by request ID.
+  Differing setups or non-Completed runs produce warnings, not refusals.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.

@@ -425,3 +425,36 @@ fn slo_verdict_is_final_persisted_and_exported() {
     assert!(csv.lines().next().unwrap().ends_with(",slo_verdict"));
     assert!(csv.lines().nth(1).unwrap().ends_with(",Failed"));
 }
+
+#[test]
+fn saved_runs_can_be_compared() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db");
+    let mut plan = TestPlan::default();
+    plan.load.users = 2;
+    plan.load.duration_secs = 1;
+    plan.load.rps_limit = 20;
+    plan.requests[0].url = format!("http://{}/health", server.address);
+    let mut ids = vec![];
+    for users in [2, 4] {
+        plan.load.users = users;
+        let mut handle = engine::start(&rt, plan.clone(), Path::new("."), db.clone()).unwrap();
+        ids.push(wait(&rt, &mut handle).run_id);
+    }
+    server.stop.cancel();
+    let history = History::open(&db).unwrap();
+    let (base, base_plan) = history.read(&ids[0]).unwrap();
+    let (candidate, candidate_plan) = history.read(&ids[1]).unwrap();
+    let c = rustload::compare::compare(&base, &base_plan, &candidate, &candidate_plan, 2.0);
+    assert_eq!(c.endpoints.len(), 1);
+    assert!(c.only_base.is_empty() && c.only_candidate.is_empty());
+    assert_eq!(c.warnings, ["Virtual users differs: 2 vs 4"]);
+    let throughput = &c.overall[0];
+    assert_eq!(
+        throughput.metric,
+        rustload::compare::CompareMetric::Throughput
+    );
+    assert!(throughput.base.unwrap() > 0.0 && throughput.candidate.unwrap() > 0.0);
+}

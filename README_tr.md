@@ -137,6 +137,18 @@ uç nokta sonuçları ve filtrelenebilir loglar hataları incelemenize yardımc�
 Planda SLO eşiği varsa sonuçları çalıştırma başlığının altında görünür.
 Kaydedilmiş bir özeti açmak için soldaki geçmişten bir çalıştırma seçin.
 
+Kaydedilmiş iki çalıştırmayı karşılaştırmak için kenar çubuğunda birini
+**Baseline** ile sabitleyin, ardından diğerinde **Compare** seçin. Karşılaştırma
+iki çalıştırmanın throughput ve P95 grafiklerini üst üste çizer, tüm çalıştırma
+için metrik başına değişimi ve istek ID'siyle eşleşen istek bazındaki
+değişimleri gösterir. Her metrik Improved, Regressed veya Unchanged olarak
+işaretlenir; genel sonuç Improved, Regressed, Mixed veya Unchanged olur. Gürültü
+bandı içindeki değişimler (varsayılan ±%2, ayarlanabilir ve hatırlanır)
+değişmemiş sayılır; bu bir tolerans aralığıdır, istatistiksel anlamlılık testi
+değildir. Kullanıcı sayısı, süre, yük profili, RPS sınırı, think time, timeout
+veya istek adımları farklı olan çalıştırmalar yine karşılaştırılır, ancak uyarı
+gösterilir. **Swap** baseline ile adayın yerini değiştirir.
+
 Uygulamanın tamamında koyu ve açık tema kullanılabilir. Açık temadaki
 [Studio](docs/screenshots/studio-light.png),
 [Studio 2](docs/screenshots/studio2-light.png) ve
@@ -254,6 +266,7 @@ bağımsız, açık döngülü bir istek varış hızı üretilmez.
 | Yüzdelik kartları | Tüm çalıştırmanın HDR Histogram sonuçları |
 | Yüzdelik grafikleri | Her ölçüm aralığına ait bağımsız histogramlar; aralıkların yüzdelikleri ortalanmaz |
 | RPS kartı | Son beş saniyedeki tamamlanmalardan hesaplanan saniyelik istek sayısı; pencere sınırındaki kovalar kapsanan süreye göre ağırlıklandırılır |
+| Çalıştırma karşılaştırması | Throughput ve veri, her çalıştırmanın tamamında tamamlanan istek ve byte'ların geçen süreye bölümüdür; gecikme tüm çalıştırmanın histogramını kullanır; veri hızı bilgi amaçlıdır ve sonucu etkilemez |
 | SLO kararı | Gecikme eşikleri tüm çalıştırmanın histogramını, hata oranı tamamlanan istekleri kullanır; throughput, beş saniyelik RPS kartı değil, tamamlanan isteklerin tüm süreye bölümüdür. Ölçülen değer hedefe eşitse eşik karşılanmış sayılır |
 | Data / sec kartı | Aynı pencerede saniyedeki yanıt gövdesi byte'ı; yalnızca tamamen okunan yanıtlar sayılır, header'lar dahil değildir |
 | Ortak RPS sınırı | Tüm kullanıcıların HTTP istek başlangıçlarını zamanlar; zamanlayıcı gecikmesinin en fazla 10 ms'lik kısmı telafi edilir, boşta geçen süre toplu istek başlatma hakkı biriktirmez |
