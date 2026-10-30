@@ -1,5 +1,5 @@
 //! Builds requests from browser "Copy as cURL (bash)" commands, HAR files and
-//! OpenAPI/Swagger JSON documents. Only request data is imported; HAR
+//! OpenAPI/Swagger JSON or YAML documents. Only request data is imported; HAR
 //! responses are never read or stored.
 use crate::core::{Auth, AuthKind, Body, Field, Request, sensitive};
 use serde::Deserialize;
@@ -676,7 +676,9 @@ pub fn from_har(bytes: &[u8], first_id: u64, api_only: bool) -> Result<Imported,
 // ---------------------------------------------------------------- OpenAPI
 
 mod refs;
+mod yaml;
 pub use refs::{REF_FILE_LIMIT, REF_FILES_MAX};
+pub use yaml::{COPY_LIMIT as YAML_COPY_LIMIT, MAX_DEPTH as YAML_MAX_DEPTH};
 
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1290,7 +1292,7 @@ impl OpenApiSpec {
     }
 }
 
-/// Imports every operation of an OpenAPI 3.x or Swagger 2.0 JSON document.
+/// Imports every operation of an OpenAPI 3.x or Swagger 2.0 JSON or YAML document.
 /// See [`parse_openapi`] and [`OpenApiSpec::build`].
 pub fn from_openapi(bytes: &[u8], first_id: u64, base_override: &str) -> Result<Imported, String> {
     let spec = parse_openapi(bytes, base_override)?;
@@ -1364,7 +1366,7 @@ fn api_key_variables(doc: &Value) -> BTreeMap<String, String> {
     names
 }
 
-/// Parses an OpenAPI 3.x or Swagger 2.0 JSON document into its
+/// Parses an OpenAPI 3.x or Swagger 2.0 JSON or YAML document into its
 /// GET/POST/PUT/PATCH/DELETE operations with the first server (variables at
 /// their defaults) or `base_override`. External `$ref`s are not followed; see
 /// [`parse_openapi_in`].
@@ -1388,24 +1390,25 @@ fn with_default_server(mut spec: OpenApiSpec, base_override: &str) -> Result<Ope
     Ok(spec)
 }
 
-/// Parses an OpenAPI 3.x or Swagger 2.0 JSON document into its
+/// Parses an OpenAPI 3.x or Swagger 2.0 JSON or YAML document into its
 /// GET/POST/PUT/PATCH/DELETE operations and servers. Path parameters become
 /// `{{variables}}`; required query and header parameters use the document's
 /// examples; JSON bodies use examples and otherwise type placeholders.
 ///
 /// With `base_dir` (the folder of the document's file), `$ref`s to other
-/// JSON files in that folder tree are read; URL references are never
+/// JSON or YAML files in that folder tree are read; URL references are never
 /// downloaded. Unresolved references are listed in
 /// [`OpenApiSpec::warnings`]. The first server is selected when its URL is
 /// usable; otherwise call [`OpenApiSpec::select_server`].
 pub fn load_openapi(bytes: &[u8], base_dir: Option<&Path>) -> Result<OpenApiSpec, String> {
     let mut doc = refs::parse_document(bytes)
-        .map_err(|e| format!("Not a JSON document (YAML is not supported): {e}"))?;
-    let version = doc
-        .get("openapi")
-        .or_else(|| doc.get("swagger"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+        .map_err(|e| format!("Not a valid JSON or YAML document: {e}"))?;
+    // Unquoted YAML versions (`swagger: 2.0`, `openapi: 3.1`) arrive as numbers.
+    let version = match doc.get("openapi").or_else(|| doc.get("swagger")) {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        _ => String::new(),
+    };
     if !(version.starts_with("3.") || version == "2.0") {
         return Err("Not an OpenAPI 3.x or Swagger 2.0 document".into());
     }

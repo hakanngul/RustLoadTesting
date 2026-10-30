@@ -35,9 +35,8 @@
   Accept-Encoding are dropped (responses are not decompressed). Credential
   headers stay session-only secrets. Unsupported options are listed, not
   guessed.
-- OpenAPI import reads JSON only (OpenAPI 3.x, Swagger 2.0) with serde_json, so
-  no new dependency; YAML would need one and waits for a user decision. Local
-  `$ref`s are followed (depth 16). Operations come in document order: paths as
+- OpenAPI import reads JSON (serde_json) and YAML (yaml-rust2, see below) for
+  OpenAPI 3.x and Swagger 2.0. Local `$ref`s are followed (depth 16). Operations come in document order: paths as
   written, then methods as written within a path item (not a fixed method
   order), because that is the order a reader sees in the file. Parameter values
   come only from the document's examples/defaults; missing ones are left empty
@@ -70,15 +69,51 @@
   listed, other schemes refused); paths are canonicalized and must stay inside
   the document's canonical folder (refuses `..` escapes, absolute paths and
   symlinks pointing outside); 10 MiB per file (checked before and while
-  reading); at most 50 files, taken in document order; files are cached by
+  reading); at most 50 files, taken in document order; JSON and YAML files
+  follow the same rules, whatever the root document is; files are cached by
   canonical path, so mutual references cannot loop, and schema cycles across
   files stop like local ones. Examples/defaults/enum/const values are data and
   are not rewritten. Messages name the reference, never file contents. A
   reference back to the root document by file name loads it as a separate
   copy (the importer is given the folder, not the root file name). Parsing
-  goes through one `parse_document` function so a YAML reader can plug in.
+  goes through one `parse_document` function for the root and every file.
   `parse_openapi` (bytes only) lists external references instead of reading
   them; `parse_openapi_in`/`load_openapi` take the folder.
+- YAML OpenAPI documents (user-approved new dependency): `yaml-rust2` 0.13
+  (MIT OR Apache-2.0, compatible with the project's MIT license; pure Rust, no
+  `unsafe` in the crate itself; default features off, so no `encoding_rs`).
+  It adds `arraydeque` 0.5.1 and `hashlink` 0.12.2 to Cargo.lock (both MIT OR
+  Apache-2.0, pure Rust collections with internal `unsafe`). Chosen because
+  it is maintained (releases through 2026), widely used and exposes a
+  pull-based event parser, so the conversion, alias expansion and limits stay
+  in our code. Not chosen: `serde_yaml` (archived) and `serde_yml` (excluded
+  by the user); `serde_yaml_ng` (last release May 2024) and `serde_norway`
+  (last release December 2024), both serde front ends on `unsafe-libyaml`, a
+  machine translation of C libyaml; `saphyr-parser` (same authors, but its
+  API was changing weekly and the newest releases were days old).
+  Detection is by content, not file name, so the bytes-only entry point
+  works: after an optional UTF-8 BOM, `{` or `[` means JSON (if serde_json
+  fails, YAML is tried because flow-style YAML starts the same way; the JSON
+  error is reported); anything else is YAML, which must be UTF-8.
+  Conversion (`import/yaml.rs`) builds `serde_json::Value` in mapping order:
+  YAML 1.2 core schema for plain scalars (`yes`/`on` stay text, integers past
+  64 bits become floats as in JSON, `.inf`/`.nan` and overflowing floats stay
+  text because JSON cannot hold them); quoted and block scalars are text;
+  keys are the written text (`200:` → `"200"`), a collection as key is
+  refused; `<<` merge keys apply (written keys win, then earlier sources);
+  `!!str`/`!` force text, `!!null`/`!!bool`/`!!int`/`!!float` apply when the
+  text fits, other tags are ignored; duplicate keys keep the last value like
+  serde_json; exactly one document. Safety: the document is parsed twice by
+  the pull parser (never its recursive `load`): pass 1 checks syntax, the
+  document count and depth (128, as serde_json) and records which anchors
+  aliases use; pass 2 builds the value and keeps copies only of those
+  anchors. Every anchor copy and alias expansion is charged (48 bytes per
+  value plus text bytes) before it is cloned, against 64 MiB per document,
+  so alias bombs fail fast with a short message; aliases cannot push nesting
+  past 128 either. yaml-rust2's scanner also limits flow nesting. The 50 MiB
+  root and 10 MiB/50-file reference limits are unchanged. Errors carry the
+  parser's reason (clipped to 80 characters; at most one quoted character)
+  and line/column, never content.
 - Servers are part of the parsed spec (`OpenApiServer` with variables and
   their `enum` options; Swagger 2.0 becomes one `{scheme}://host/basePath`
   server whose `scheme` variable lists `schemes`). Operations keep their URL

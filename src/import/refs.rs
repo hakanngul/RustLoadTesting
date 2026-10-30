@@ -8,8 +8,9 @@
 //! refused); each file may be at most [`REF_FILE_LIMIT`] bytes and at most
 //! [`REF_FILES_MAX`] files are read. A file is read once however often it is
 //! referenced, so files that refer to each other do not loop; references
-//! inside a file resolve against that file. Messages name the reference,
-//! never file contents.
+//! inside a file resolve against that file. Files may be JSON or YAML,
+//! whatever the root document is. Messages name the reference, never file
+//! contents.
 use super::percent_decode;
 use crate::core::clip;
 use serde_json::Value;
@@ -50,10 +51,25 @@ const NAME_MAPS: [&str; 17] = [
     "paths",
 ];
 
-/// Parses one document or referenced file. Only JSON for now; a YAML reader
-/// plugs in here.
-pub(super) fn parse_document(bytes: &[u8]) -> Result<Value, serde_json::Error> {
-    serde_json::from_slice(bytes)
+/// Parses one document or referenced file, JSON or YAML, by content (the
+/// same with or without a file name): a document whose first character after
+/// an optional BOM and whitespace is `{` or `[` is read as JSON, and as YAML
+/// only if that fails (flow-style YAML starts the same way; the JSON error is
+/// reported); anything else is YAML (see [`super::yaml`]). Errors give a short
+/// reason and position, never content.
+pub(super) fn parse_document(bytes: &[u8]) -> Result<Value, String> {
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let first = bytes.iter().find(|b| !b.is_ascii_whitespace());
+    if matches!(first, Some(b'{' | b'[')) {
+        return serde_json::from_slice(bytes).or_else(|json| {
+            std::str::from_utf8(bytes)
+                .ok()
+                .and_then(|text| super::yaml::parse(text).ok())
+                .ok_or_else(|| format!("JSON: {json}"))
+        });
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "YAML: the file is not UTF-8 text")?;
+    super::yaml::parse(text)
 }
 
 /// Embeds the local files `doc` refers to and rewrites every `$ref` to a
@@ -222,12 +238,15 @@ impl Bundler {
                 return None;
             }
         };
-        let Ok(value) = parse_document(&bytes) else {
-            self.warn(
-                reference,
-                "names a file that is not JSON (YAML is not supported yet)",
-            );
-            return None;
+        let value = match parse_document(&bytes) {
+            Ok(value) => value,
+            Err(e) => {
+                self.warn(
+                    reference,
+                    &format!("names a file that is not valid JSON or YAML ({e})"),
+                );
+                return None;
+            }
         };
         let index = self.files.len();
         self.files.push(value);

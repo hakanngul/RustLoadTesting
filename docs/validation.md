@@ -1,5 +1,63 @@
 # Validation evidence
 
+## OpenAPI YAML import
+
+OpenAPI documents and referenced files may be YAML (new dependency
+`yaml-rust2` 0.13.0; Cargo.lock adds `yaml-rust2`, `arraydeque` 0.5.1 and
+`hashlink` 0.12.2). The dialog tab reads "OpenAPI (JSON/YAML)".
+
+- 100 tests pass (3 YAML unit tests in the library, 6 compare, 25 core/report,
+  16 dashboard, 26 engine, 24 import); fmt, strict Clippy, build and
+  `git diff --check` succeed.
+- `openapi_yaml_unquoted_versions_are_accepted`: `swagger: 2.0` and
+  `openapi: 3.1` written without quotes (read as numbers) are accepted;
+  `openapi: 4.0` is still refused.
+- Unit (`import::yaml`): core-schema scalars (hex/octal, floats, 64-bit
+  overflow to float; `.inf`, `.nan`, `1e999`, `yes`, `off`, `1_000`, `1:20`
+  stay text; quoted numbers stay text); integer/boolean/float/null keys as
+  written; `!!str`, `!`, `!!int` and an ignored custom tag; merge keys from a
+  list with written keys winning and a quoted `<<` as a plain key; an alias
+  used as a key; multiple documents, a collection as key and a bad merge
+  refused; depth 128 accepted, 129 refused, also when reached through an
+  alias; empty and comment-only input.
+- Import: `openapi_yaml_imports_like_its_json_twin` (the petstore in YAML
+  with comments, flow/block styles and `200:` keys gives the same operation
+  order and the same built requests, variables and warnings as the JSON
+  file; BOM + Swagger 2.0 YAML), `openapi_yaml_keys_scalars_and_anchors`
+  (aliased parameter in two operations, `<<` merged schema, `0x10`, `yes`,
+  `007`, `!!str 200`, `200:`/`true:` response keys),
+  `openapi_yaml_alias_bombs_and_deep_nesting_are_refused` (nine levels of ten
+  aliases refused with the 64 MiB message; written 129-level flow and block
+  nesting refused; 5,000,000 `[` as YAML and as JSON refused, all within
+  10 s — the test file finishes in about 0.4 s),
+  `openapi_yaml_errors_are_short_and_never_show_content` (unclosed flow,
+  bad indentation, second document, unknown alias, truncated JSON: message
+  under 160 characters with a line and without the marker; non-UTF-8 input),
+  `openapi_yaml_external_refs_load_like_json_ones` (YAML root → YAML path
+  item → YAML components → `.yml` schema → JSON file, and the same from a
+  JSON root; four files read once; a broken YAML file is a warning with its
+  position but not its content). Existing tests changed: the Swagger test now
+  expects YAML to import and truncated JSON to be refused with a JSON error;
+  the bounded-refs test uses a malformed YAML file instead of a valid one.
+- Engine: `imported_yaml_openapi_spec_reaches_the_server` — a YAML spec with
+  a `200:` key and a `$ref` to a YAML schema file runs against the localhost
+  fixture with zero failures; the echoed body equals the generated
+  `{"qty": 2, "item": "book"}`.
+- Native Linux/Xvfb, Dark, 1440×900 (fixture on 127.0.0.1:8080): a scratch
+  `api.yaml` with `$ref`s to `paths/echo.yml` (anchored query parameter
+  reused by alias), `schemas/order.json` and `schemas/item.yaml`. The tab
+  read "OpenAPI (JSON/YAML)" and the path label mentioned .json/.yaml/.yml;
+  Preview showed `http://127.0.0.1:8080`, "Read 3 referenced file(s)" and
+  GET /echo, POST /echo, GET /health in file order. Import (Replace) gave
+  three requests; both /echo requests had `q=hello` and the POST body was
+  `{"qty": 2, "item": "book"}`. A 10 s run with 10 users sent 200 requests,
+  0.00 % errors, all HTTP 200. A malformed YAML file showed "Not a valid JSON
+  or YAML document: YAML: while parsing a flow sequence, expected ',' or ']'
+  (line 4, column 1)" without its content.
+- Not checked: macOS/Windows, Light theme and narrow windows for this change
+  (only labels changed), very large YAML files in the dialog (the parser is
+  run twice; time for a 50 MiB YAML file was not measured), YAML in UTF-16.
+
 ## OpenAPI document order, external refs and server choice
 
 OpenAPI operations now follow the document (serde_json `preserve_order`; no new

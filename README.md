@@ -239,7 +239,10 @@ the requests and warnings, then add them to the plan or replace its requests.
 - Authorization, Cookie and other credential values are marked secret: they
   work in the current session but are never saved, like any other secret. A
   secret that is exactly one `{{variable}}` reference is saved as that reference.
-- **OpenAPI (JSON)** takes the path of an OpenAPI 3.x or Swagger 2.0 JSON file.
+- **OpenAPI (JSON/YAML)** takes the path of an OpenAPI 3.x or Swagger 2.0 file
+  in JSON or YAML (`.json`, `.yaml`, `.yml`; the format is recognized from the
+  content: a file starting with `{` or `[` is read as JSON, anything else as
+  YAML).
   **Preview** lists every GET/POST/PUT/PATCH/DELETE operation in document order
   (paths as written, methods as written within a path) with its method, path,
   name and tags. Filter the list by text (path,
@@ -247,8 +250,8 @@ the requests and warnings, then add them to the plan or replace its requests.
   operations the filters show. All operations start checked and only checked
   ones are imported. The dialog shows how many are selected and disables
   Import while the selection would take the plan past 500 requests.
-- `$ref`s to other JSON files next to the document are followed, e.g.
-  `common.json#/components/schemas/Pet` or `./schemas/pet.json`, relative to
+- `$ref`s to other JSON or YAML files next to the document are followed, e.g.
+  `common.json#/components/schemas/Pet` or `./schemas/pet.yaml`, relative to
   the file that contains the reference. Only files inside the document's folder
   (and its subfolders) are read: `..` that leads outside, absolute paths and
   symlinks pointing outside are refused. Nothing is downloaded: `http(s)`
@@ -281,8 +284,16 @@ the requests and warnings, then add them to the plan or replace its requests.
   (`{{api_key_2}}`… for further schemes). These are secret plan variables you
   fill in before running; the saved plan keeps the references, never the
   values. Basic Auth needs its credentials. API keys in cookies, other schemes,
-  cookie parameters and non-JSON bodies are listed in the preview. YAML
-  documents are not supported yet; convert them to JSON first.
+  cookie parameters and non-JSON bodies are listed in the preview.
+- YAML is read with the YAML 1.2 core schema: `yes`/`no`/`on`/`off` stay text,
+  unquoted numbers and `true`/`false`/`null` are typed, quoted values are text
+  (an unquoted `swagger: 2.0` or `openapi: 3.1` version is still accepted).
+  Keys keep the order and the text they are written with (`200:` is the
+  response code `"200"`). Anchors, aliases and `<<` merge keys work; other
+  tags than the core ones (`!!str`, `!!int`…) are ignored. `.inf`/`.nan` stay
+  text because JSON has no such numbers. One document per file; nesting deeper
+  than 128 levels and aliases that would expand past 64 MiB are refused, and
+  errors show a reason with line and column, never file contents.
 
 ### SLO thresholds
 

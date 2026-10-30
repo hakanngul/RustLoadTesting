@@ -7,7 +7,8 @@ one active run. The HTTP engine never depends on egui or the UI event loop.
 Modules: core (model, validation, variables, CSV), engine (Tokio users and pacing),
 metrics (histograms, counters, bounded samples), storage (SQLite history), report
 (offline HTML/JSON/CSV), import (cURL/HAR/OpenAPI parsers; `import/refs.rs`
-bundles local `$ref` files), theme and ui (eframe).
+bundles local `$ref` files, `import/yaml.rs` turns YAML into the same
+`serde_json::Value` as JSON), theme and ui (eframe).
 
 Import is pure parsing with no network access: the OpenAPI importer reads only
 the document and local files inside its folder, then the dialog builds

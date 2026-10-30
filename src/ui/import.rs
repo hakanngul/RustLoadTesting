@@ -154,7 +154,7 @@ impl RustLoadApp {
                     for (source, label) in [
                         (Source::Curl, "Copy as cURL"),
                         (Source::Har, "HAR file"),
-                        (Source::OpenApi, "OpenAPI (JSON)"),
+                        (Source::OpenApi, "OpenAPI (JSON/YAML)"),
                     ] {
                         if ui.selectable_label(dialog.source == source, label).clicked() {
                             dialog.source = source;
@@ -171,7 +171,7 @@ impl RustLoadApp {
                     ui.add(egui::TextEdit::singleline(&mut dialog.path).desired_width(f32::INFINITY));
                     ui.checkbox(&mut dialog.api_only, "Only XHR/fetch requests (skip pages, scripts, styles, images)");
                 } else if dialog.source == Source::OpenApi {
-                    ui.label("OpenAPI 3.x or Swagger 2.0 JSON file path");
+                    ui.label("OpenAPI 3.x or Swagger 2.0 file path (.json, .yaml or .yml)");
                     ui.add(egui::TextEdit::singleline(&mut dialog.path).desired_width(f32::INFINITY));
                     ui.label("Base URL (optional; replaces the selected server)");
                     ui.add(
@@ -181,7 +181,7 @@ impl RustLoadApp {
                     );
                     ui.label(
                         RichText::new(
-                            "Preview lists the GET/POST/PUT/PATCH/DELETE operations in document order; choose which to import. $refs to JSON files in the document's folder are read; URLs are never downloaded. Path parameters become {{variables}}; required query/header parameters use the document's examples; JSON bodies use examples, else type placeholders to review. Bearer/OAuth and API keys become secret variable references.",
+                            "Preview lists the GET/POST/PUT/PATCH/DELETE operations in document order; choose which to import. $refs to JSON/YAML files in the document's folder are read; URLs are never downloaded. Path parameters become {{variables}}; required query/header parameters use the document's examples; JSON bodies use examples, else type placeholders to review. Bearer/OAuth and API keys become secret variable references.",
                         )
                         .small()
                         .color(p.muted),
