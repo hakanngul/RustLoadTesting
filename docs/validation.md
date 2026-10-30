@@ -1,5 +1,22 @@
 # Validation evidence
 
+## Last-plan restore fix
+
+Before: the app started with an empty plan but kept the last plan's path, so
+**Save** / Ctrl+S silently overwrote that file with the empty plan. Now the
+remembered plan is reopened at start; if it is missing or unreadable the path
+is forgotten.
+
+- `saved_plans_load_and_bad_files_are_refused` covers the shared
+  `TestPlan::load` (round trip, missing file, wrong schema, invalid JSON,
+  over 16 MiB).
+- Native Linux/Xvfb: saved the Local Demo plan, quit with Ctrl+Q, restarted:
+  the plan reopened with "Plan opened…". Deleted the file and restarted: a new
+  plan, and **Save** opened the path dialog (default `rustload-plan.json`)
+  instead of writing to the old path.
+
+Suite: **101 passed**. Format, strict all-target Clippy and build pass. Linux only.
+
 ## OpenAPI YAML import
 
 OpenAPI documents and referenced files may be YAML (new dependency
