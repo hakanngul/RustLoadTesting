@@ -22,7 +22,10 @@ impl RunState {
     }
 }
 
+// Persisted structs default missing fields so history written by older
+// versions keeps loading after fields are added.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Counts {
     pub started: u64,
     pub completed: u64,
@@ -36,6 +39,8 @@ pub struct Counts {
     pub status_errors: u64,
     pub body_errors: u64,
     pub preparation_errors: u64,
+    /// Body bytes of fully read responses.
+    pub bytes: u64,
 }
 impl Counts {
     pub fn error_rate(&self) -> f64 {
@@ -51,6 +56,7 @@ impl Counts {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Latency {
     pub samples: u64,
     pub p50: f64,
@@ -77,6 +83,7 @@ pub fn latency(h: &Histogram<u64>) -> Latency {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Point {
     pub interval_secs: f64,
     pub second: u64,
@@ -86,14 +93,17 @@ pub struct Point {
     pub successful: u64,
     pub failed: u64,
     pub latency: Latency,
+    pub bytes: u64,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LogEntry {
     pub elapsed: f64,
     pub level: String,
     pub message: String,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Endpoint {
     pub id: u64,
     pub name: String,
@@ -102,6 +112,7 @@ pub struct Endpoint {
     pub latency: Latency,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Snapshot {
     pub run_id: String,
     pub name: String,
@@ -110,6 +121,8 @@ pub struct Snapshot {
     pub active_users: u32,
     pub target_users: u32,
     pub rps: f64,
+    /// Response body bytes per second over the same trailing window as `rps`.
+    pub bytes_rate: f64,
     pub counts: Counts,
     pub latency: Latency,
     pub statuses: BTreeMap<u16, u64>,
@@ -135,6 +148,7 @@ pub struct Accumulator {
     last_completed: u64,
     last_successful: u64,
     last_failed: u64,
+    last_bytes: u64,
     last_elapsed: f64,
 }
 impl Default for Accumulator {
@@ -151,6 +165,7 @@ impl Default for Accumulator {
             last_completed: 0,
             last_successful: 0,
             last_failed: 0,
+            last_bytes: 0,
             last_elapsed: 0.0,
         }
     }
@@ -180,10 +195,12 @@ impl Accumulator {
             successful: self.counts.successful - self.last_successful,
             failed: self.counts.failed - self.last_failed,
             latency: latency(&self.bucket),
+            bytes: self.counts.bytes - self.last_bytes,
         };
         self.last_completed = self.counts.completed;
         self.last_successful = self.counts.successful;
         self.last_failed = self.counts.failed;
+        self.last_bytes = self.counts.bytes;
         self.last_elapsed = elapsed;
         self.bucket.reset();
         if self.series.len() == SERIES_LIMIT {
@@ -192,7 +209,9 @@ impl Accumulator {
         self.series.push_back(point.clone());
         point
     }
-    pub fn snapshot(&self, elapsed: f64) -> Snapshot {
+    /// Per-second rate over the trailing five seconds: whole intervals inside the
+    /// window, a prorated partial interval at its start, plus the open interval.
+    fn trailing_rate(&self, elapsed: f64, value: impl Fn(&Point) -> u64, open: u64) -> f64 {
         let window_start = (elapsed - 5.0).max(0.0);
         let count: f64 = self
             .series
@@ -200,17 +219,29 @@ impl Accumulator {
             .rev()
             .filter(|p| p.elapsed > window_start)
             .map(|p| {
-                p.completed as f64
+                value(p) as f64
                     * ((p.elapsed - window_start).min(p.interval_secs) / p.interval_secs)
             })
             .sum::<f64>()
-            + (self.counts.completed - self.last_completed) as f64;
+            + open as f64;
+        count / elapsed.clamp(0.001, 5.0)
+    }
+    pub fn snapshot(&self, elapsed: f64) -> Snapshot {
         Snapshot {
             elapsed,
             active_users: self.users,
             counts: self.counts.clone(),
             latency: latency(&self.total),
-            rps: count / elapsed.clamp(0.001, 5.0),
+            rps: self.trailing_rate(
+                elapsed,
+                |p| p.completed,
+                self.counts.completed - self.last_completed,
+            ),
+            bytes_rate: self.trailing_rate(
+                elapsed,
+                |p| p.bytes,
+                self.counts.bytes - self.last_bytes,
+            ),
             statuses: self.statuses.clone(),
             endpoints: self
                 .endpoints
@@ -224,5 +255,21 @@ impl Accumulator {
             logs: self.logs.clone(),
             ..Snapshot::default()
         }
+    }
+}
+
+/// Human-readable binary size, e.g. `512 B`, `1.5 KiB`, `3.2 MiB`.
+pub fn format_bytes(bytes: f64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes.max(0.0);
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{value:.0} {}", UNITS[0])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
     }
 }

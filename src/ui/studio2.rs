@@ -211,6 +211,13 @@ impl RustLoadApp {
                 p.text,
                 |ui| {
                     ui.label(RichText::new("Last 5 seconds").small().color(p.muted));
+                    if !s.run_id.is_empty() {
+                        ui.label(
+                            RichText::new(format!("{}/s data", format_bytes(s.bytes_rate)))
+                                .small()
+                                .color(p.muted),
+                        );
+                    }
                     sparkline(
                         ui,
                         s.series

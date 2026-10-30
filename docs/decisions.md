@@ -14,6 +14,10 @@
   think time. Only fully read HTTP responses enter latency histograms; network and
   timeout durations are not mixed into response latency percentiles.
 - RPS cards use trailing five seconds; percentile cards use whole-run histograms.
+  Data/sec uses the same window and counts body bytes of fully read responses
+  only (no headers; responses are not decompressed, so this is the wire body).
+- Persisted metric structs default missing fields, so history written by older
+  versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.
 - A single global scheduled gate spaces starts; no accumulated burst credits.
   Slots advance from the schedule, not the wake-up time, so millisecond timer

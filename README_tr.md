@@ -130,8 +130,8 @@ Ayrıntılar için [Studio 2 rehberine](docs/studio2.md) ve
 
 ### Monitor
 
-Monitor, mevcut testin istek hızını, P50/P95/P99 gecikmelerini, hata oranını ve
-istek sayısını gösterir. Grafiklerden istek hızını, ölçüm aralıklarına ait
+Monitor, mevcut testin istek hızını, yanıt verisi hızını, P50/P95/P99
+gecikmelerini, hata oranını ve istek sayısını gösterir. Grafiklerden istek hızını, ölçüm aralıklarına ait
 gecikmeleri ve aktif kullanıcı sayısını izleyebilirsiniz. HTTP durum kodları,
 uç nokta sonuçları ve filtrelenebilir loglar hataları incelemenize yardımcı olur.
 Kaydedilmiş bir özeti açmak için soldaki geçmişten bir çalıştırma seçin.
@@ -237,6 +237,7 @@ bağımsız, açık döngülü bir istek varış hızı üretilmez.
 | Yüzdelik kartları | Tüm çalıştırmanın HDR Histogram sonuçları |
 | Yüzdelik grafikleri | Her ölçüm aralığına ait bağımsız histogramlar; aralıkların yüzdelikleri ortalanmaz |
 | RPS kartı | Son beş saniyedeki tamamlanmalardan hesaplanan saniyelik istek sayısı; pencere sınırındaki kovalar kapsanan süreye göre ağırlıklandırılır |
+| Data / sec kartı | Aynı pencerede saniyedeki yanıt gövdesi byte'ı; yalnızca tamamen okunan yanıtlar sayılır, header'lar dahil değildir |
 | Ortak RPS sınırı | Tüm kullanıcıların HTTP istek başlangıçlarını zamanlar; zamanlayıcı gecikmesinin en fazla 10 ms'lik kısmı telafi edilir, boşta geçen süre toplu istek başlatma hakkı biriktirmez |
 
 P50/P90/P95/P99 için HDR histogramları kullanılır. Değerler mikrosaniye olarak

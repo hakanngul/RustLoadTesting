@@ -336,3 +336,40 @@ fn stop_cancels_waiters_then_drains_with_bounded_grace() {
     assert!((1..=5).contains(&count));
     server.stop.cancel();
 }
+
+#[test]
+fn response_bytes_are_counted_per_endpoint_and_interval() {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db");
+    let mut plan = TestPlan::default();
+    plan.load.users = 2;
+    plan.load.duration_secs = 2;
+    plan.load.rps_limit = 20;
+    plan.requests[0].url = format!("http://{}/health", server.address);
+    plan.requests.push(Request {
+        id: 2,
+        url: format!("http://{}/large", server.address),
+        ..Request::default()
+    });
+    let mut handle = engine::start(&rt, plan, Path::new("."), db.clone()).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    assert_eq!(s.counts.failed, 0);
+    let small = &s.endpoints[0].counts;
+    let large = &s.endpoints[1].counts;
+    assert!(small.completed > 0 && large.completed > 0);
+    // Fixture bodies: `{"ok":true}` and 16 KiB of `x`.
+    assert_eq!(small.bytes, small.completed * 11);
+    assert_eq!(large.bytes, large.completed * 16_384);
+    assert_eq!(s.counts.bytes, small.bytes + large.bytes);
+    let stored: u64 = History::open(&db)
+        .unwrap()
+        .points(&s.run_id)
+        .unwrap()
+        .iter()
+        .map(|p| p.bytes)
+        .sum();
+    assert_eq!(stored, s.counts.bytes);
+}
