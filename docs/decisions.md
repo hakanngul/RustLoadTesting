@@ -50,6 +50,11 @@
   ramp-down lets the current iteration finish. Stages derive the peak users and
   total duration; at most 20 stages. The editor offers a table and draggable
   points; axis bounds freeze during a drag.
+- The latency distribution widget reads `Snapshot.latency_distribution`: the
+  whole-run (measured) histogram in at most 40 log-spaced buckets between its
+  minimum and maximum, built from recorded values so counts sum to the sample
+  count. Log spacing keeps both the bulk and the tail visible; P50/P95/P99 come
+  from the same histogram, never from the bars.
 - Arrival Rate is the open model. A scheduler starts iteration `k` at
   `k / rate` seconds (fixed slots from t=0, so a late wake-up catches up instead
   of lowering the rate) on an idle VU from a pool of `users`. With no idle VU

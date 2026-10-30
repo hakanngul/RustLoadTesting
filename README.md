@@ -178,9 +178,12 @@ the request editor. You can rename pages and switch between them during a run.
 
 </details>
 
-The catalog has seven widgets: throughput, latency, logs, active users, HTTP
-status distribution, endpoint breakdown, and live metrics. Each reads the current
-run. Multiple instances are allowed; log filtering and follow controls are shared
+The catalog has eight widgets: throughput, latency, logs, active users, HTTP
+status distribution, endpoint breakdown, live metrics, and latency distribution.
+Each reads the current run. Latency distribution draws the whole-run histogram
+(measured window only) as up to 40 log-spaced bars between the fastest and
+slowest response, with the P50/P95/P99 of the same histogram marked; hover a bar
+for its range and count. Multiple instances are allowed; log filtering and follow controls are shared
 between log widgets in this version.
 
 Layouts support up to 20 named pages and 16 widgets per page. Names must be unique
@@ -375,7 +378,7 @@ publisher certificates are not configured. Native platform UI acceptance remains
 a separate check; see [releases](docs/releases.md).
 
 Capacity at 1,000 users and long-running renderer memory use have not been
-benchmarked. Flow, Pause, templates, browser emulation, histogram visualization,
+benchmarked. Flow, Pause, templates, browser emulation,
 cookie sessions, distributed workers, and benchmark comparisons are outside this
 implementation.
 

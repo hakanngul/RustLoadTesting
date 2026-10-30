@@ -185,3 +185,17 @@ fn canvas_reorders_all_widgets_without_losing_workbench_docks() {
         [1, 2, 3]
     );
 }
+
+#[test]
+fn latency_distribution_widget_is_an_eighth_catalog_entry() {
+    assert_eq!(WidgetKind::ALL.len(), 8);
+    assert!(WidgetKind::ALL.contains(&WidgetKind::LatencyHistogram));
+    let mut page = DashboardPage::default();
+    let id = page.add(WidgetKind::LatencyHistogram, Dock::Right).unwrap();
+    let json = serde_json::to_string(&page).unwrap();
+    let restored: DashboardPage = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        restored.widgets.iter().find(|w| w.id == id).unwrap().kind,
+        WidgetKind::LatencyHistogram
+    );
+}

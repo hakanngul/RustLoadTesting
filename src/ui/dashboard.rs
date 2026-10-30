@@ -321,6 +321,9 @@ impl RustLoadApp {
                             WidgetKind::StatusCodes => status_panel(ui, &self.live, p),
                             WidgetKind::Endpoints => endpoint_panel(ui, &self.live, p),
                             WidgetKind::LiveMetrics => self.studio2_metrics(ui, p),
+                            WidgetKind::LatencyHistogram => {
+                                latency_histogram(ui, &self.live, p, plot_height)
+                            }
                             WidgetKind::Unknown => {
                                 ui.label("Unavailable widget");
                             }

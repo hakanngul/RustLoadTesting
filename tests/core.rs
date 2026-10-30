@@ -550,3 +550,35 @@ fn arrival_rate_profile_validates_and_labels() {
     let old: TestPlan = serde_json::from_value(json).unwrap();
     assert_eq!(old.load.arrival_rate, LoadConfig::default().arrival_rate);
 }
+
+#[test]
+fn latency_distribution_covers_every_sample_in_log_buckets() {
+    let mut h = histogram();
+    assert!(distribution(&h).is_empty());
+    // 1 ms to 2 s across three orders of magnitude.
+    for us in [1_000, 1_200, 5_000, 5_100, 20_000, 250_000, 2_000_000] {
+        h.record(us).unwrap();
+    }
+    h.record_n(5_000, 10).unwrap();
+    let buckets = distribution(&h);
+    assert_eq!(buckets.len(), DISTRIBUTION_BUCKETS);
+    assert_eq!(buckets.iter().map(|b| b.count).sum::<u64>(), h.len());
+    assert!((buckets[0].from_ms - 1.0).abs() < 0.01);
+    assert!((buckets.last().unwrap().to_ms - 2000.0).abs() < 2.0);
+    for w in buckets.windows(2) {
+        assert!((w[0].to_ms - w[1].from_ms).abs() < 1e-9, "contiguous");
+        // Equal ratios: log-spaced.
+        let ratio = |b: &LatencyBucket| b.to_ms / b.from_ms;
+        assert!((ratio(&w[0]) - ratio(&w[1])).abs() < 1e-9);
+    }
+    // The 12 responses around 5 ms land in one bar.
+    let peak = buckets.iter().max_by_key(|b| b.count).unwrap();
+    assert_eq!(peak.count, 12);
+    assert!(peak.from_ms <= 5.0 && peak.to_ms >= 5.1, "{peak:?}");
+    // One distinct value: a single bar holding every sample.
+    let mut single = histogram();
+    single.record_n(3_000, 7).unwrap();
+    let one = distribution(&single);
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].count, 7);
+}

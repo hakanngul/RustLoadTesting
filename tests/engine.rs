@@ -65,6 +65,11 @@ fn hundred_users_real_scenario_history_and_exports() {
     );
     assert_eq!(s.counts.completed, server.count.load(Ordering::Relaxed));
     assert_eq!(s.counts.completed, s.latency.samples);
+    // The distribution widget's bars hold every whole-run response.
+    assert_eq!(
+        s.latency_distribution.iter().map(|b| b.count).sum::<u64>(),
+        s.latency.samples
+    );
     assert_eq!(s.endpoints.len(), 3);
     assert!(s.endpoints.iter().all(|e| e.counts.completed > 0));
     assert!(

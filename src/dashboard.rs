@@ -13,11 +13,12 @@ pub enum WidgetKind {
     StatusCodes,
     Endpoints,
     LiveMetrics,
+    LatencyHistogram,
     #[serde(other)]
     Unknown,
 }
 impl WidgetKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Throughput,
         Self::Latency,
         Self::Logs,
@@ -25,6 +26,7 @@ impl WidgetKind {
         Self::StatusCodes,
         Self::Endpoints,
         Self::LiveMetrics,
+        Self::LatencyHistogram,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -35,6 +37,7 @@ impl WidgetKind {
             Self::StatusCodes => "HTTP Status Distribution",
             Self::Endpoints => "Endpoint Breakdown",
             Self::LiveMetrics => "Live Metrics",
+            Self::LatencyHistogram => "Latency Distribution",
             Self::Unknown => "Unavailable widget",
         }
     }
