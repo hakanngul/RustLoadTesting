@@ -14,6 +14,9 @@ backend service, or Docker.
 [Custom dashboards](#custom-dashboards) · [Measurements](#how-results-are-measured) ·
 [Development](#development)
 
+New to RustLoad? The [user guide](docs/user-guide.md) walks you through a first
+test, building scenarios, load models, reading results and comparing runs.
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/monitor-light.png">
   <img src="docs/screenshots/monitor-dark.png" alt="RustLoad Monitor showing a completed local test with latency percentiles, request rates, HTTP status counts, endpoint results, and logs">
@@ -28,11 +31,12 @@ the native Linux app using the bundled HTTP fixture.*
 | --- | --- |
 | Build an HTTP scenario | Sequential GET, POST, PUT, PATCH, and DELETE requests; headers, query parameters, raw or JSON bodies, Basic and Bearer auth |
 | Pass data between requests | Variables, per-user CSV rows, and JSON Pointer extraction for values such as access tokens |
-| Check responses | Expected status codes, response-time limits, and JSON Pointer equality assertions |
-| Configure load | Concurrent users, constant or linear ramp-up profiles, total duration, think time, timeouts, and a global request-start limit |
+| Check responses | Expected status codes, response-time limits, JSON Pointer equality assertions, and SLO thresholds with a Passed/Failed verdict |
+| Configure load | Constant, ramp-up or multi-stage user profiles, an open-model arrival rate (optionally ramped), warmup, think time, timeouts, and a global request-start limit |
+| Import scenarios | Browser cURL commands, HAR files, and OpenAPI 3.x / Swagger 2.0 documents (JSON or YAML) |
 | Follow a run | Request rates, latency percentiles, active users, HTTP status counts, endpoint summaries, and filtered logs |
 | Arrange your workspace | Two Studio layouts, customizable widgets and named pages in Studio, Studio 2 and Monitor, drag-to-reorder controls, adjustable widths, and Dark/Light themes |
-| Keep results | Local SQLite history and HTML, JSON, or CSV exports |
+| Keep results | Local SQLite history, run comparison against a baseline, and HTML, JSON, or CSV exports |
 
 RustLoad is an MVP. Linux execution has been checked; macOS is the product target
 and still needs native acceptance testing. See [platform status](#platform-status)
@@ -232,8 +236,9 @@ the requests and warnings, then add them to the plan or replace its requests.
   content type becomes a JSON body.
 - Connection headers, `Content-Length` and `Accept-Encoding` are removed:
   responses are read uncompressed so sizes and extraction stay exact.
-- `-k`, `-L`, `-F`, `-T`, `@file` data and HEAD/OPTIONS requests are not imported;
-  the preview lists what was skipped and why.
+- `-k` and `-L` are ignored with a warning (TLS is always verified, redirects are
+  never followed); `-F`, `-T`, `@file` data and HEAD/OPTIONS requests are not
+  imported. The preview lists what was ignored or skipped and why.
 - HAR import can keep only XHR/fetch requests. Only requests are read; HAR
   responses are never imported. Files up to 50 MiB, at most 500 requests.
 - Authorization, Cookie and other credential values are marked secret: they
@@ -458,11 +463,11 @@ a separate check; see [releases](docs/releases.md).
 
 Capacity at 1,000 users and long-running renderer memory use have not been
 benchmarked. Flow, Pause, templates, browser emulation,
-cookie sessions, distributed workers, and benchmark comparisons are outside this
-implementation.
+cookie sessions and distributed workers are outside this implementation.
 
 ## Documentation
 
+- [User guide](docs/user-guide.md) ([Türkçe](docs/user-guide_tr.md))
 - [MVP scope](docs/MVP.md)
 - [Architecture](docs/architecture.md)
 - [Implementation decisions](docs/decisions.md)

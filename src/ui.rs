@@ -411,7 +411,9 @@ impl RustLoadApp {
                         }
                         if ui
                             .button("Import…")
-                            .on_hover_text("Add requests from Copy as cURL or a HAR file")
+                            .on_hover_text(
+                                "Add requests from Copy as cURL, a HAR file or an OpenAPI document",
+                            )
                             .clicked()
                         {
                             self.import.get_or_insert_with(Default::default);

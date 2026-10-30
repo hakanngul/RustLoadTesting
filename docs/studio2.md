@@ -20,7 +20,7 @@ plan or a separate load engine. Editing in one layout is reflected in the other.
 - Center, above: compact Name and Method/URL form, Params/Headers/Auth/Assertions/
   Extractors/Advanced tabs. The horizontal divider resizes this editor.
 - Center, below: Body and Load Configuration together, with target authorization.
-  Think time, timeout and response cap are under an Advanced disclosure.
+  Think time, timeout and response cap are under the **Timeout, think time & body limit** section.
 - Right: active/target VUs, five-second completion RPS, whole-run P95, error rate,
   average response time and real interval sparklines. No fabricated delta badges.
   When the plan has SLO thresholds, the verdict and per-threshold results appear
