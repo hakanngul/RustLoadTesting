@@ -210,8 +210,14 @@ async fn coordinate(
     let mut sequence = 0;
     let mut last_bucket = began;
     let mut persistence_failed = false;
-    let arrival_rate =
-        (plan.load.profile == core::Profile::ArrivalRate).then_some(plan.load.arrival_rate);
+    let open_model = plan.load.profile == core::Profile::ArrivalRate;
+    let arrival_rate = open_model.then_some(plan.load.arrival_rate);
+    // Bounded: at most STAGE_LIMIT + 1 points.
+    let target_rate = if open_model {
+        plan.load.rate_schedule()
+    } else {
+        Vec::new()
+    };
     loop {
         tokio::select! {
             _ = interval.tick() => {},
@@ -251,6 +257,7 @@ async fn coordinate(
         };
         mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
         snapshot.arrival_rate = arrival_rate;
+        snapshot.target_rate.clone_from(&target_rate);
         snapshot.run_id.clone_from(&id);
         snapshot.name.clone_from(&plan.name);
         snapshot.target_users = plan.load.max_users();
@@ -280,6 +287,7 @@ async fn coordinate(
             };
             mark_warmup(&mut snapshot, plan.load.warmup, ended_at);
             snapshot.arrival_rate = arrival_rate;
+            snapshot.target_rate.clone_from(&target_rate);
             snapshot.run_id.clone_from(&id);
             snapshot.name.clone_from(&plan.name);
             snapshot.target_users = plan.load.max_users();
@@ -524,15 +532,17 @@ async fn run_iteration(c: &Context, vars: &mut Variables) -> bool {
     true
 }
 
-/// Open model: starts an iteration every `1 / arrival_rate` seconds on an idle
-/// VU from the pool. With every VU busy the iteration is dropped and counted,
+/// Open model: starts iteration `k` at `LoadConfig::arrival_start(k)` (every
+/// `1 / arrival_rate` seconds for a constant rate) on an idle VU from the pool. With every VU busy the iteration is dropped and counted,
 /// so a slow target cannot lower the offered load silently.
 async fn arrivals(c: Context, pool: Vec<Variables>) {
     let idle = Arc::new(Mutex::new(pool));
-    let interval = 1.0 / c.plan.load.arrival_rate;
     let mut running = JoinSet::new();
     for k in 0u64.. {
-        let at = c.began + Duration::from_secs_f64(k as f64 * interval);
+        let Some(offset) = c.plan.load.arrival_start(k) else {
+            break;
+        };
+        let at = c.began + Duration::from_secs_f64(offset);
         if at >= c.deadline {
             break;
         }

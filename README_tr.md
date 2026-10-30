@@ -305,6 +305,16 @@ başlar; yavaşlayan bir hedef uygulanan yükü düşürmez. Her tekrar en fazla
 olarak sayılır; bunlar istek olmadığından hata oranına girmez. Bu modda ortak RPS
 sınırı ve senaryo arası bekleme uygulanmaz.
 
+**Ramp the rate** işaretlenirse hız en fazla 20 hız aşamasıyla zamanla değişir
+(örneğin 60 s'de 0'dan 100 it/s'ye, 240 s boyunca 100 it/s, 60 s'de 100'den 0'a).
+Hız alanı **Start rate** (başlangıç hızı) olur; her aşama bir önceki hızdan
+hedefine doğrusal geçer ve toplam süre aşamaların toplamıdır. `k`. tekrar, hızın
+zamana göre integrali `k`'ye ulaştığında başlar; bu yüzden hızı 0 olan bir aşama
+yeni başlangıçları durdurur. Tablo ve sürüklenebilir önizleme kullanıcı
+aşamalarıyla aynıdır. Throughput grafikleri planlanan hızı kesikli **Target it/s**
+çizgisiyle gösterir; bir tekrar birden fazla istek gönderebildiği için istek/s
+bunun katı olabilir. Hız aşaması yoksa hız, eski planlarda olduğu gibi sabittir.
+
 **Stages** profili kullanıcı sayısını en fazla 20 aşamayla şekillendirir; her
 aşama bir önceki sayıdan (başlangıçta 0) hedefe doğrusal geçer. Aşamaları
 tablodan düzenleyebilir veya önizleme grafiğindeki noktaları sürükleyebilirsiniz.

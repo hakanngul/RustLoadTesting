@@ -124,7 +124,11 @@ test ve belgeleri aynı kapsamda güncelle.
   Azalışta kullanıcı mevcut iterasyonu bitirip boşta bekler. Stages'te kullanıcı
   sayısı ve süre aşamalardan türetilir.
 - Arrival Rate (açık model): senaryo iterasyonları `k / rate` anlarında başlar
-  (t=0'dan, süre sonundan önce), yanıt süresinden bağımsızdır. Kullanıcı sayısı
+  (t=0'dan, süre sonundan önce), yanıt süresinden bağımsızdır. Opsiyonel hız
+  aşamaları (en fazla 20): `arrival_rate` başlangıç hızıdır, her aşama önceki
+  hızdan hedefine doğrusal geçer, süre aşamaların toplamıdır; iterasyon `k`,
+  hızın integrali `k`'ye ulaştığında başlar (hız 0 iken başlangıç olmaz).
+  Aşama yoksa sabit hız eskisi gibidir. Kullanıcı sayısı
   en fazla VU havuzudur; boş VU yoksa iterasyon düşürülür ve
   `dropped_iterations` sayacına yazılır (istek değildir; `started` ve hata
   oranına girmez; warmup'ta ayrı sayılır). Bu modda RPS kapısı ve think time

@@ -560,6 +560,175 @@ fn arrival_rate_profile_validates_and_labels() {
     assert_eq!(old.load.arrival_rate, LoadConfig::default().arrival_rate);
 }
 
+fn rate_ramp(start: f64, spec: &[(u64, f64)]) -> LoadConfig {
+    LoadConfig {
+        profile: Profile::ArrivalRate,
+        arrival_rate: start,
+        duration_secs: 999,
+        users: 50,
+        rate_stages: spec
+            .iter()
+            .map(|&(duration_secs, target_rate)| RateStage {
+                duration_secs,
+                target_rate,
+            })
+            .collect(),
+        ..LoadConfig::default()
+    }
+}
+
+#[test]
+fn arrival_starts_follow_the_integrated_rate() {
+    let close = |a: Option<f64>, b: f64| {
+        let a = a.expect("iteration is scheduled");
+        assert!((a - b).abs() < 1e-9, "{a} != {b}");
+    };
+    // Constant rate: exactly k / rate as before, nothing at or after the end.
+    let constant = LoadConfig {
+        profile: Profile::ArrivalRate,
+        arrival_rate: 7.0,
+        duration_secs: 3,
+        ..LoadConfig::default()
+    };
+    for k in 0..21 {
+        assert_eq!(constant.arrival_start(k), Some(k as f64 / 7.0));
+    }
+    assert_eq!(constant.arrival_start(21), None);
+    assert_eq!(constant.rate_schedule(), [(0.0, 7.0), (3.0, 7.0)]);
+    // Linear ramp 0 to R over T: the integral R t^2 / (2T) reaches k at sqrt(2kT/R).
+    let ramp = rate_ramp(0.0, &[(10, 50.0)]);
+    for k in 0..250 {
+        close(ramp.arrival_start(k), (2.0 * k as f64 * 10.0 / 50.0).sqrt());
+    }
+    assert_eq!(ramp.arrival_start(250), None, "the area is exactly 250");
+    // From a start rate: 10 t + t^2 = k, so t = sqrt(25 + k) - 5.
+    let start = rate_ramp(10.0, &[(10, 30.0)]);
+    close(start.arrival_start(11), 1.0);
+    close(start.arrival_start(56), 4.0);
+    // Hold 10/s for 2 s, fall to 0 over 1 s, pause 3 s, rise to 10/s over 1 s.
+    let multi = rate_ramp(10.0, &[(2, 10.0), (1, 0.0), (3, 0.0), (1, 10.0)]);
+    assert_eq!(multi.total_secs(), 7);
+    close(multi.arrival_start(19), 1.9);
+    close(multi.arrival_start(20), 2.0);
+    close(multi.arrival_start(21), 2.0 + 2.0 / (10.0 + 80f64.sqrt()));
+    close(multi.arrival_start(25), 3.0);
+    // The zero-rate stage starts nothing; starts resume on the next rise.
+    close(multi.arrival_start(26), 6.0 + 0.2f64.sqrt());
+    close(multi.arrival_start(29), 6.0 + 0.8f64.sqrt());
+    assert_eq!(multi.arrival_start(30), None);
+    let times: Vec<f64> = (0..30).map_while(|k| multi.arrival_start(k)).collect();
+    assert_eq!(times.len(), 30);
+    assert!(!times.iter().any(|t| *t > 3.0 + 1e-9 && *t < 6.0));
+    // Start times never go backwards, whatever the slopes.
+    let mixed = rate_ramp(3.3, &[(7, 91.7), (5, 0.4), (11, 250.0), (2, 0.0)]);
+    let mut last = 0.0;
+    let mut k = 0;
+    while let Some(t) = mixed.arrival_start(k) {
+        assert!(t >= last && t < 25.0, "iteration {k} at {t} after {last}");
+        last = t;
+        k += 1;
+    }
+    let area = (3.3 + 91.7) / 2.0 * 7.0
+        + (91.7 + 0.4) / 2.0 * 5.0
+        + (0.4 + 250.0) / 2.0 * 11.0
+        + 250.0 / 2.0 * 2.0;
+    assert!((k as f64 - area).abs() <= 1.0, "{k} starts for area {area}");
+}
+
+#[test]
+fn rate_stages_validate_label_and_load_old_plans() {
+    let check = |load: LoadConfig| {
+        TestPlan {
+            load,
+            ..TestPlan::default()
+        }
+        .validate(std::path::Path::new("."))
+    };
+    assert!(check(rate_ramp(0.0, &[(60, 100.0), (240, 100.0), (60, 0.0)])).is_ok());
+    assert!(
+        check(rate_ramp(5.0, &[(1, 0.0)])).is_ok(),
+        "start rate counts"
+    );
+    assert!(check(rate_ramp(0.0, &vec![(1, 1.0); STAGE_LIMIT])).is_ok());
+    assert!(check(rate_ramp(0.0, &vec![(1, 1.0); STAGE_LIMIT + 1])).is_err());
+    assert!(check(rate_ramp(0.0, &[(0, 10.0)])).is_err());
+    assert!(
+        check(rate_ramp(0.0, &[(5, 0.0)])).is_err(),
+        "peak must be > 0"
+    );
+    assert!(check(rate_ramp(-1.0, &[(5, 10.0)])).is_err());
+    assert!(check(rate_ramp(f64::NAN, &[(5, 10.0)])).is_err());
+    for bad in [-0.5, 100_001.0, f64::NAN, f64::INFINITY] {
+        assert!(check(rate_ramp(0.0, &[(5, bad)])).is_err(), "{bad}");
+    }
+    assert!(
+        check(rate_ramp(0.0, &[(90_000, 1.0)])).is_err(),
+        "over 86,400s"
+    );
+    // Without stages a zero rate stays invalid.
+    assert!(check(rate_ramp(0.0, &[])).is_err());
+    // The duration and warmup limits follow the stage total.
+    let mut warm = rate_ramp(0.0, &[(5, 10.0), (5, 10.0)]);
+    warm.duration_secs = 1;
+    warm.warmup = Warmup::Duration { secs: 8 };
+    assert_eq!(warm.total_secs(), 10);
+    assert!(check(warm.clone()).is_ok());
+    warm.warmup = Warmup::Duration { secs: 10 };
+    assert!(check(warm).is_err());
+
+    let staged = rate_ramp(10.0, &[(60, 100.0), (240, 100.0), (60, 0.0)]);
+    assert_eq!(
+        staged.profile_label(),
+        "arrival rate 10/s, stages 60s to 100, 240s to 100, 60s to 0, max 50 VUs"
+    );
+    assert_eq!(staged.peak_rate(), 100.0);
+    assert_eq!(
+        staged.rate_schedule(),
+        [(0.0, 10.0), (60.0, 100.0), (300.0, 100.0), (360.0, 0.0)]
+    );
+    assert!(!staged.is_elevated());
+    assert!(rate_ramp(10.0, &[(5, 150.0), (5, 0.0)]).is_elevated());
+    // Rate stages are ignored by the closed-model profiles.
+    let closed = LoadConfig {
+        profile: Profile::Constant,
+        ..staged.clone()
+    };
+    assert_eq!(closed.total_secs(), 999);
+
+    let plan = TestPlan {
+        load: staged,
+        ..TestPlan::default()
+    };
+    let mut json = serde_json::to_value(&plan).unwrap();
+    let back: TestPlan = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(back.load.rate_stages, plan.load.rate_stages);
+    // Plans saved before rate stages keep a constant rate.
+    json["load"].as_object_mut().unwrap().remove("rate_stages");
+    let old: TestPlan = serde_json::from_value(json).unwrap();
+    assert!(old.load.rate_stages.is_empty());
+    assert_eq!(old.load.total_secs(), 999);
+    assert_eq!(old.load.arrival_start(3), Some(0.3));
+}
+
+#[test]
+fn arrival_summary_names_constant_and_staged_rates() {
+    let mut s = Snapshot::default();
+    assert_eq!(s.arrival_summary(), None);
+    s.arrival_rate = Some(50.0);
+    s.target_rate = vec![(0.0, 50.0), (2.0, 50.0)];
+    assert_eq!(s.arrival_summary().as_deref(), Some("Arrival rate 50/s"));
+    s.arrival_rate = Some(0.0);
+    s.target_rate = vec![(0.0, 0.0), (60.0, 100.0), (120.0, 0.0)];
+    assert_eq!(
+        s.arrival_summary().as_deref(),
+        Some("Arrival rate 0 to 100/s (stages)")
+    );
+    // History saved before rate stages has no schedule.
+    s.target_rate.clear();
+    s.arrival_rate = Some(20.0);
+    assert_eq!(s.arrival_summary().as_deref(), Some("Arrival rate 20/s"));
+}
+
 #[test]
 fn latency_distribution_covers_every_sample_in_log_buckets() {
     let mut h = histogram();

@@ -529,9 +529,11 @@ fn compact_load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
         egui::Grid::new("studio2_load_config")
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
-                let fixed = c.profile != Profile::Stages;
                 ui.label(users_label(c));
-                ui.add_enabled(fixed, egui::DragValue::new(&mut c.users).range(1..=10_000));
+                ui.add_enabled(
+                    c.profile != Profile::Stages,
+                    egui::DragValue::new(&mut c.users).range(1..=10_000),
+                );
                 ui.end_row();
                 ui.label("Ramp-up time");
                 ui.add_enabled(
@@ -543,7 +545,7 @@ fn compact_load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
                 ui.end_row();
                 ui.label("Total duration");
                 ui.add_enabled(
-                    fixed,
+                    !duration_derived(c),
                     egui::DragValue::new(&mut c.duration_secs)
                         .range(1..=86_400)
                         .suffix(" s"),
@@ -563,6 +565,9 @@ fn compact_load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
             });
         if c.profile == Profile::Stages {
             stage_editor(ui, c, "studio2_stages");
+        }
+        if c.profile == Profile::ArrivalRate && !c.rate_stages.is_empty() {
+            rate_stage_editor(ui, c, "studio2_rate_stages");
         }
         egui::CollapsingHeader::new("Timeout, think time & body limit").show(ui, |ui| {
             ui.horizontal(|ui| {

@@ -1,5 +1,49 @@
 # Validation evidence
 
+## Arrival-rate stages update
+
+The Arrival Rate (open) profile can ramp its rate: **Ramp the rate** seeds three
+stages from the current rate and duration (up, hold, down to 0) with a start
+rate of 0; the rate field becomes **Start rate** and the duration is derived.
+User stages and rate stages share one generic table and draggable preview.
+Throughput charts (Monitor and the Studio 2 widget) draw a dashed **Target it/s**
+line from `Snapshot.target_rate` up to the elapsed time.
+
+- `arrival_starts_follow_the_integrated_rate`: a constant rate gives exactly
+  `k / rate` and `None` at the end; a 0 to 50 it/s ramp over 10 s gives
+  `sqrt(2kT/R)` for all 250 starts; a start-rate ramp, a hold / fall / zero-rate
+  pause / rise schedule (no start inside the pause), monotonic times and a start
+  count matching the integrated area for mixed slopes.
+- `rate_stages_validate_label_and_load_old_plans`: 20 stages accepted, 21
+  rejected; zero duration, negative, NaN, infinite, over-100,000 and all-zero
+  rates rejected; a zero constant rate is still rejected; duration and warmup
+  limits use the stage total; label, peak rate and elevated warning; plans
+  without `rate_stages` load as a constant rate.
+- `arrival_summary_names_constant_and_staged_rates`: status/report wording and
+  history without a schedule.
+- `arrival_rate_stages_ramp_the_start_rate` (localhost fixture): 0 to 60 it/s
+  over 3 s starts 85–90 iterations (the integral is 90), drops none, the first
+  interval runs below 25/s and a later one above 35/s; `target_rate` is the
+  schedule. `arrival_rate_stages_still_drop_iterations_without_idle_vus`:
+  `/body-delay` with 1 VU drops at least 40 and started + dropped is 85–90.
+  Both were run 6 more times in a row without a failure.
+- Native Linux/Xvfb, Studio at 1440×900 (Dark): ticking Ramp the rate seeded
+  6 s / 18 s / 6 s stages; table edits to 40 it/s and dragging the first point
+  (to 11 s, 24.3 it/s) updated the derived duration (35 s). A real run against
+  the fixture completed with 833 requests, matching the schedule's integral
+  (832.35), 0 errors and 0 dropped; the Monitor's dashed Target it/s line
+  tracked the measured rate and the status line read "Arrival rate 0 to 40/s
+  (stages)". Light theme checked on the finished run. Studio 2 (Light 1440×900
+  and Dark 900×720): same controls, a preview drag, toggling off restored a
+  40 it/s constant rate and on re-seeded stages; a run from Studio 2 stayed in
+  Studio 2 with the target line in the Throughput widget. Studio at 900×720
+  (Dark) showed the full rate table and preview without clipping; the user
+  Stages editor, now the same shared helper, still seeded 7/25/7 s stages and a
+  drag kept whole users.
+
+Suite: **70 passed** (6 compare, 23 core/report, 10 dashboard-layout, 23 engine,
+8 import). Format, strict all-target Clippy and build pass. Linux only.
+
 ## OpenAPI import update
 
 **Import…** gains an **OpenAPI (JSON)** tab for OpenAPI 3.x and Swagger 2.0

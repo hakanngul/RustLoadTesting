@@ -731,7 +731,7 @@ impl RustLoadApp {
             ui.separator();
             ui.label(
                 RichText::new(if self.plan.load.profile == Profile::ArrivalRate {
-                    "Open model: iterations start at the arrival rate; busy VUs drop them."
+                    "Open model: iterations start at the arrival rate (or its stages); busy VUs drop them."
                 } else {
                     "Closed-loop users. RPS caps starts across all users."
                 })
@@ -1298,10 +1298,10 @@ fn status_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
             ))
             .small(),
         );
-        if let Some(rate) = s.arrival_rate {
+        if let Some(rate) = s.arrival_summary() {
             ui.label(
                 RichText::new(format!(
-                    "Arrival rate {rate}/s · Dropped iterations {}",
+                    "{rate} · Dropped iterations {}",
                     s.counts.dropped_iterations
                 ))
                 .small()
@@ -1559,6 +1559,18 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                         if s.warmup != Warmup::None {
                             plot.line(line("Warmup", p.muted, rates(|v| v.warmup_completed)));
                         }
+                        if !s.target_rate.is_empty() {
+                            // Planned iteration starts per second (open model), up
+                            // to now; one iteration may send several requests.
+                            plot.line(
+                                line(
+                                    "Target it/s",
+                                    p.accent,
+                                    schedule_until(&s.target_rate, s.elapsed),
+                                )
+                                .style(egui_plot::LineStyle::dashed_loose()),
+                            );
+                        }
                     }
                     Chart::Latency => {
                         for (name, color, f) in [
@@ -1600,18 +1612,36 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
         );
     });
 }
+/// The (seconds, value) schedule joined linearly and cut at `until` seconds.
+fn schedule_until(points: &[(f64, f64)], until: f64) -> Vec<[f64; 2]> {
+    let mut line = Vec::with_capacity(points.len() + 1);
+    for (i, &(t, v)) in points.iter().enumerate() {
+        if t <= until {
+            line.push([t, v]);
+            continue;
+        }
+        if let Some(&(ta, va)) = i.checked_sub(1).map(|j| &points[j]) {
+            let share = ((until - ta) / (t - ta)).clamp(0.0, 1.0);
+            line.push([until, va + (v - va) * share]);
+        }
+        break;
+    }
+    line
+}
 fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
     egui::Grid::new("load_config")
         .num_columns(2)
         .spacing([8.0, 10.0])
         .show(ui, |ui| {
-            let fixed = c.profile != Profile::Stages;
             ui.label(users_label(c));
-            ui.add_enabled(fixed, egui::DragValue::new(&mut c.users).range(1..=10_000));
+            ui.add_enabled(
+                c.profile != Profile::Stages,
+                egui::DragValue::new(&mut c.users).range(1..=10_000),
+            );
             ui.end_row();
             ui.label("Total duration");
             ui.add_enabled(
-                fixed,
+                !duration_derived(c),
                 egui::DragValue::new(&mut c.duration_secs)
                     .range(1..=86_400)
                     .suffix(" s"),
@@ -1667,6 +1697,9 @@ fn load_editor(ui: &mut egui::Ui, c: &mut LoadConfig) {
         });
     if c.profile == Profile::Stages {
         stage_editor(ui, c, "stages");
+    }
+    if c.profile == Profile::ArrivalRate && !c.rate_stages.is_empty() {
+        rate_stage_editor(ui, c, "rate_stages");
     }
     ui.label(
         "Total duration includes ramp-up and warmup. Stop allows up to 5s for in-flight requests.",
@@ -1762,23 +1795,52 @@ fn users_label(c: &LoadConfig) -> &'static str {
         "Virtual users"
     }
 }
-/// Arrival-rate grid row (open model only), shared by both load editors.
+/// Arrival-rate grid rows (open model only), shared by both load editors: the
+/// rate (the start rate when staged) and the switch for ramping it in stages.
 fn arrival_rate_row(ui: &mut egui::Ui, c: &mut LoadConfig) {
     if c.profile != Profile::ArrivalRate {
         return;
     }
-    ui.label("Arrival rate");
+    let staged = !c.rate_stages.is_empty();
+    ui.label(if staged { "Start rate" } else { "Arrival rate" });
     ui.add(
         egui::DragValue::new(&mut c.arrival_rate)
-            .range(0.01..=100_000.0)
+            .range(if staged { 0.0 } else { 0.01 }..=MAX_ARRIVAL_RATE)
             .speed(0.5)
             .max_decimals(2)
             .suffix(" it/s"),
     )
-    .on_hover_text(
-        "Scenario iterations started per second, regardless of response time. When all Max VUs are busy the iteration is dropped and counted.",
-    );
+    .on_hover_text(if staged {
+        "Iterations per second at the start; each rate stage moves linearly from the previous rate to its target. When all Max VUs are busy the iteration is dropped and counted."
+    } else {
+        "Scenario iterations started per second, regardless of response time. When all Max VUs are busy the iteration is dropped and counted."
+    });
     ui.end_row();
+    ui.label("Rate stages");
+    let mut ramp = staged;
+    if ui
+        .checkbox(&mut ramp, "Ramp the rate")
+        .on_hover_text("Change the iteration rate over time in up to 20 linear stages")
+        .changed()
+    {
+        if ramp {
+            // Ramp up from 0 to the current rate, hold, ramp down to 0.
+            c.rate_stages = seed_stages(c.duration_secs, c.arrival_rate);
+            c.arrival_rate = 0.0;
+        } else {
+            c.arrival_rate = c.peak_rate().max(0.01);
+            c.rate_stages.clear();
+        }
+    }
+    ui.end_row();
+}
+/// Whether the run length follows from stages instead of the duration field.
+fn duration_derived(c: &LoadConfig) -> bool {
+    match c.profile {
+        Profile::Stages => true,
+        Profile::ArrivalRate => !c.rate_stages.is_empty(),
+        _ => false,
+    }
 }
 /// A setting that only applies to closed-model profiles; disabled with an
 /// explanation for the arrival-rate profile.
@@ -1810,42 +1872,140 @@ fn profile_combo(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
         });
     if c.profile == Profile::Stages && c.stages.is_empty() {
         // Start from ramp-up, hold, ramp-down over the current duration and users.
-        let part = (c.duration_secs / 5).max(1);
-        c.stages = vec![
-            Stage {
-                duration_secs: part,
-                target_users: c.users,
-            },
-            Stage {
-                duration_secs: c.duration_secs.saturating_sub(2 * part).max(1),
-                target_users: c.users,
-            },
-            Stage {
-                duration_secs: part,
-                target_users: 0,
-            },
-        ];
+        c.stages = seed_stages(c.duration_secs, c.users as f64);
     }
 }
-/// Stage table and draggable preview, shared by both load editors. Keeps the
-/// derived users and duration in sync so labels and warmup limits stay right.
+/// Ramp up to `value`, hold it, ramp down to 0 over about `duration_secs`.
+fn seed_stages<S: StageRow>(duration_secs: u64, value: f64) -> Vec<S> {
+    let part = (duration_secs / 5).max(1);
+    vec![
+        S::new(part, value),
+        S::new(duration_secs.saturating_sub(2 * part).max(1), value),
+        S::new(part, 0.0),
+    ]
+}
+/// One stage of a piecewise-linear schedule: a duration and the value it
+/// reaches at its end. Lets user and rate stages share one editor.
+trait StageRow: Copy {
+    fn new(duration_secs: u64, value: f64) -> Self;
+    fn duration(&mut self) -> &mut u64;
+    fn value(&self) -> f64;
+    fn set_value(&mut self, value: f64);
+}
+impl StageRow for Stage {
+    fn new(duration_secs: u64, value: f64) -> Self {
+        let mut stage = Self {
+            duration_secs,
+            target_users: 0,
+        };
+        stage.set_value(value);
+        stage
+    }
+    fn duration(&mut self) -> &mut u64 {
+        &mut self.duration_secs
+    }
+    fn value(&self) -> f64 {
+        self.target_users as f64
+    }
+    fn set_value(&mut self, value: f64) {
+        self.target_users = value.round().clamp(0.0, 10_000.0) as u32;
+    }
+}
+impl StageRow for RateStage {
+    fn new(duration_secs: u64, target_rate: f64) -> Self {
+        Self {
+            duration_secs,
+            target_rate,
+        }
+    }
+    fn duration(&mut self) -> &mut u64 {
+        &mut self.duration_secs
+    }
+    fn value(&self) -> f64 {
+        self.target_rate
+    }
+    fn set_value(&mut self, value: f64) {
+        self.target_rate = ((value * 100.0).round() / 100.0).clamp(0.0, MAX_ARRIVAL_RATE);
+    }
+}
+/// What a stage editor edits: target users or a target iteration rate.
+struct StageAxis {
+    column: &'static str,
+    series: &'static str,
+    unit: &'static str,
+    /// Suffix of the value field in the table.
+    suffix: &'static str,
+    max: f64,
+    decimals: usize,
+    /// Value at t = 0, before the first stage.
+    start: f64,
+    color: Color32,
+}
+/// User-stage table and preview (Stages profile). Keeps the derived users and
+/// duration in sync so labels and warmup limits stay right.
 fn stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
+    let p = theme::palette(ui.visuals().dark_mode);
+    let axis = StageAxis {
+        column: "Target users",
+        series: "Users",
+        unit: "users",
+        suffix: "",
+        max: 10_000.0,
+        decimals: 0,
+        start: 0.0,
+        color: p.success,
+    };
+    stage_table(ui, &mut c.stages, &axis, id);
+    c.users = c.max_users().max(1);
+    c.duration_secs = c.total_secs().max(1);
+}
+/// Rate-stage table and preview (Arrival Rate profile with ramping).
+fn rate_stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
+    let p = theme::palette(ui.visuals().dark_mode);
+    let axis = StageAxis {
+        column: "Target rate",
+        series: "Iterations/s",
+        unit: "it/s",
+        suffix: " it/s",
+        max: MAX_ARRIVAL_RATE,
+        decimals: 2,
+        start: c.arrival_rate,
+        color: p.accent,
+    };
+    stage_table(ui, &mut c.rate_stages, &axis, id);
+    c.duration_secs = c.total_secs().max(1);
+}
+/// Stage table and draggable preview shared by user and rate stages in both
+/// load editors.
+fn stage_table<S: StageRow>(ui: &mut egui::Ui, stages: &mut Vec<S>, axis: &StageAxis, id: &str) {
     let p = theme::palette(ui.visuals().dark_mode);
     let mut remove = None;
     egui::Grid::new((id, "table")).striped(true).show(ui, |ui| {
         ui.strong("Stage");
         ui.strong("Duration");
-        ui.strong("Target users");
+        ui.strong(axis.column);
         ui.end_row();
-        let count = c.stages.len();
-        for (i, s) in c.stages.iter_mut().enumerate() {
+        let count = stages.len();
+        for (i, s) in stages.iter_mut().enumerate() {
             ui.label(format!("{}", i + 1));
             ui.add(
-                egui::DragValue::new(&mut s.duration_secs)
+                egui::DragValue::new(s.duration())
                     .range(1..=86_400)
                     .suffix(" s"),
             );
-            ui.add(egui::DragValue::new(&mut s.target_users).range(0..=10_000));
+            let mut value = s.value();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut value)
+                        .range(0.0..=axis.max)
+                        .speed(if axis.decimals > 0 { 0.5 } else { 1.0 })
+                        .max_decimals(axis.decimals)
+                        .suffix(axis.suffix),
+                )
+                .changed()
+            {
+                s.set_value(value);
+            }
             if ui
                 .add_enabled(count > 1, egui::Button::new("×").small())
                 .clicked()
@@ -1856,35 +2016,30 @@ fn stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
         }
     });
     if let Some(i) = remove {
-        c.stages.remove(i);
+        stages.remove(i);
     }
     if ui
-        .add_enabled(
-            c.stages.len() < STAGE_LIMIT,
-            egui::Button::new("+ Add stage"),
-        )
+        .add_enabled(stages.len() < STAGE_LIMIT, egui::Button::new("+ Add stage"))
         .clicked()
     {
-        let last = c.stages.last().map_or(c.users, |s| s.target_users);
-        c.stages.push(Stage {
-            duration_secs: 30,
-            target_users: last,
-        });
+        let last = stages.last().map_or(axis.start, |s| s.value());
+        stages.push(S::new(30, last));
     }
+    let mut points = vec![[0.0, axis.start]];
+    for s in stages.iter_mut() {
+        let at = points.last().map_or(0.0, |p| p[0]) + *s.duration() as f64;
+        points.push([at, s.value()]);
+    }
+    let total = points.last().map_or(0.0, |p| p[0]);
+    let peak = points.iter().map(|p| p[1]).fold(0.0, f64::max);
     // Bounds stay fixed while a point is dragged; otherwise moving a point
     // would rescale the axes under the pointer and run away.
     let drag = ui.id().with((id, "drag"));
     let frozen = ui.id().with((id, "bounds"));
-    let bounds = ui.data(|d| d.get_temp::<[f64; 2]>(frozen)).unwrap_or([
-        c.total_secs() as f64 * 1.05,
-        c.max_users() as f64 * 1.2 + 1.0,
-    ]);
-    let ends: Vec<[f64; 2]> = c
-        .schedule()
-        .into_iter()
-        .skip(1)
-        .map(|(t, u)| [t, u])
-        .collect();
+    let bounds = ui
+        .data(|d| d.get_temp::<[f64; 2]>(frozen))
+        .unwrap_or([total * 1.05, peak * 1.2 + 1.0]);
+    let ends = points[1..].to_vec();
     let response = Plot::new((id, "plot"))
         .height(130.0)
         .allow_drag(false)
@@ -1893,10 +2048,9 @@ fn stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
         .allow_boxed_zoom(false)
         .show(ui, |plot| {
             plot.set_plot_bounds(egui_plot::PlotBounds::from_min_max([0.0, 0.0], bounds));
-            let line: Vec<[f64; 2]> = c.schedule().into_iter().map(|(t, u)| [t, u]).collect();
             plot.line(
-                Line::new("Users", PlotPoints::from(line))
-                    .color(p.success)
+                Line::new(axis.series, PlotPoints::from(points.clone()))
+                    .color(axis.color)
                     .width(2.0_f32),
             );
             plot.points(
@@ -1905,7 +2059,7 @@ fn stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
                     .color(p.accent),
             );
         });
-    // Drag a stage end to change its duration (x) and target users (y).
+    // Drag a stage end to change its duration (x) and target value (y).
     let r = &response.response;
     // A drag registers after the pointer has moved a few pixels, so pick the
     // point under where the press began.
@@ -1936,14 +2090,21 @@ fn stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
             ui.data(|d| d.get_temp::<usize>(drag)),
             r.interact_pointer_pos(),
         )
-        && i < c.stages.len()
+        && i < stages.len()
     {
         let value = response.transform.value_from_position(pos);
-        let start: u64 = c.stages[..i].iter().map(|s| s.duration_secs).sum();
-        c.stages[i].duration_secs = (value.x.min(bounds[0]) - start as f64)
+        let start = points[i][0];
+        *stages[i].duration() = (value.x.min(bounds[0]) - start)
             .round()
             .clamp(1.0, 86_400.0) as u64;
-        c.stages[i].target_users = value.y.round().clamp(0.0, bounds[1].min(10_000.0)) as u32;
+        // Whole units, or tenths for small rates.
+        let step = if axis.decimals > 0 && bounds[1] <= 50.0 {
+            0.1
+        } else {
+            1.0
+        };
+        let y = (value.y / step).round() * step;
+        stages[i].set_value(y.clamp(0.0, bounds[1].min(axis.max)));
     }
     if r.drag_stopped() {
         ui.data_mut(|d| {
@@ -1953,15 +2114,13 @@ fn stage_editor(ui: &mut egui::Ui, c: &mut LoadConfig, id: &str) {
     }
     ui.label(
         RichText::new(format!(
-            "{}s total · peak {} users · drag the points or edit the table",
-            c.total_secs(),
-            c.max_users()
+            "{total}s total · peak {} {} · drag the points or edit the table",
+            (peak * 100.0).round() / 100.0,
+            axis.unit
         ))
         .small()
         .color(p.muted),
     );
-    c.users = c.max_users().max(1);
-    c.duration_secs = c.total_secs().max(1);
 }
 /// Warmup selector shared by the Studio and Studio 2 load editors.
 fn warmup_control(ui: &mut egui::Ui, warmup: &mut Warmup, duration_secs: u64, id: &str) {

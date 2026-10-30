@@ -79,8 +79,19 @@
   separately); it is not a request, so the request identities and error rate are
   unchanged. Each VU keeps its CSV row and extracted variables across its
   iterations, like closed-model users. The RPS gate and think time are skipped
-  because the schedule already paces starts. A constant rate only for now;
-  rate stages are not implemented.
+  because the schedule already paces starts.
+- Arrival rate stages (`LoadConfig.rate_stages`, at most 20): empty means the
+  constant `arrival_rate`, so older plans are unchanged. Otherwise
+  `arrival_rate` is the start rate (may be 0) and each stage moves linearly to
+  its `target_rate`; the run length is the stage total. Iteration `k` starts at
+  `LoadConfig::arrival_start(k)`, the first `t` where the integrated rate
+  reaches `k`, solved analytically per linear segment (a stable quadratic root,
+  exact for slope 0; zero-rate segments start nothing). A constant rate still
+  gives exactly `k / rate`. Validation: 1–20 stages, each at least 1 s, rates
+  0–100,000 and a peak above 0. The engine copies `rate_schedule()` (at most 21
+  points) into `Snapshot.target_rate` for the dashed Target it/s chart line.
+  User stages and rate stages share one generic stage editor (table and
+  draggable preview) in Studio and Studio 2.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
   Charts use independent one-second histogram buckets, never averaged percentiles.

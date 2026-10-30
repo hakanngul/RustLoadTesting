@@ -67,6 +67,17 @@ pub struct Stage {
 }
 pub const STAGE_LIMIT: usize = 20;
 
+/// Linear move of the arrival rate from the previous rate (the start rate at
+/// first) to `target_rate` iterations/s over `duration_secs`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct RateStage {
+    pub duration_secs: u64,
+    pub target_rate: f64,
+}
+/// Highest iteration rate a plan may request, in iterations/s.
+pub const MAX_ARRIVAL_RATE: f64 = 100_000.0;
+
 /// Requests started during warmup are excluded from every result metric.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Warmup {
@@ -102,8 +113,11 @@ pub struct LoadConfig {
     /// Used when `profile` is `Stages`; then `users` and `duration_secs` are derived.
     pub stages: Vec<Stage>,
     /// Iterations started per second when `profile` is `ArrivalRate`; `users` is
-    /// then the maximum VU pool.
+    /// then the maximum VU pool. With `rate_stages` this is the start rate.
     pub arrival_rate: f64,
+    /// Optional ramping of the arrival rate. Empty means a constant
+    /// `arrival_rate`; otherwise `duration_secs` is derived from the stages.
+    pub rate_stages: Vec<RateStage>,
 }
 impl Default for LoadConfig {
     fn default() -> Self {
@@ -119,6 +133,7 @@ impl Default for LoadConfig {
             warmup: Warmup::None,
             stages: vec![],
             arrival_rate: 10.0,
+            rate_stages: vec![],
         }
     }
 }
@@ -140,6 +155,9 @@ impl LoadConfig {
     pub fn total_secs(&self) -> u64 {
         match self.profile {
             Profile::Stages => self.stages.iter().map(|s| s.duration_secs).sum(),
+            Profile::ArrivalRate if !self.rate_stages.is_empty() => {
+                self.rate_stages.iter().map(|s| s.duration_secs).sum()
+            }
             _ => self.duration_secs,
         }
     }
@@ -147,7 +165,7 @@ impl LoadConfig {
     /// Every profile is expressed this way, so the engine has one code path.
     pub fn schedule(&self) -> Vec<(f64, f64)> {
         let users = self.users as f64;
-        let total = self.duration_secs as f64;
+        let total = self.total_secs() as f64;
         match self.profile {
             // Arrival rate: the pool size bounds concurrency; starts follow the rate.
             Profile::Constant | Profile::ArrivalRate => vec![(0.0, users), (total, users)],
@@ -167,7 +185,7 @@ impl LoadConfig {
     pub fn is_elevated(&self) -> bool {
         self.max_users() > 100
             || match self.profile {
-                Profile::ArrivalRate => self.arrival_rate > 100.0,
+                Profile::ArrivalRate => self.peak_rate() > 100.0,
                 _ => self.rps_limit > 100,
             }
     }
@@ -176,9 +194,19 @@ impl LoadConfig {
         match self.profile {
             Profile::Constant => "constant".into(),
             Profile::RampUp => format!("ramp-up {}s", self.ramp_secs),
-            Profile::ArrivalRate => format!(
+            Profile::ArrivalRate if self.rate_stages.is_empty() => format!(
                 "arrival rate {}/s, max {} VUs",
                 self.arrival_rate, self.users
+            ),
+            Profile::ArrivalRate => format!(
+                "arrival rate {}/s, stages {}, max {} VUs",
+                self.arrival_rate,
+                self.rate_stages
+                    .iter()
+                    .map(|s| format!("{}s to {}", s.duration_secs, s.target_rate))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                self.users
             ),
             Profile::Stages => format!(
                 "stages {}",
@@ -189,6 +217,67 @@ impl LoadConfig {
                     .join(", ")
             ),
         }
+    }
+    /// The arrival rate over time as (seconds, iterations/s) points joined
+    /// linearly; a constant rate is two points.
+    pub fn rate_schedule(&self) -> Vec<(f64, f64)> {
+        let mut points = vec![(0.0, self.arrival_rate)];
+        if self.rate_stages.is_empty() {
+            points.push((self.duration_secs as f64, self.arrival_rate));
+        }
+        let mut at = 0.0;
+        for s in &self.rate_stages {
+            at += s.duration_secs as f64;
+            points.push((at, s.target_rate));
+        }
+        points
+    }
+    /// Highest arrival rate of the schedule, in iterations/s.
+    pub fn peak_rate(&self) -> f64 {
+        self.rate_stages
+            .iter()
+            .map(|s| s.target_rate)
+            .fold(self.arrival_rate, f64::max)
+    }
+    /// Seconds into the run when open-model iteration `k` (0-based) starts: the
+    /// first moment the integrated arrival rate reaches `k`. A constant rate
+    /// gives exactly `k / rate`. `None` once that is at or past the run end.
+    pub fn arrival_start(&self, k: u64) -> Option<f64> {
+        let total = self.total_secs() as f64;
+        let at = if self.rate_stages.is_empty() {
+            if self.arrival_rate.is_nan() || self.arrival_rate <= 0.0 {
+                return None;
+            }
+            k as f64 / self.arrival_rate
+        } else {
+            let mut before = 0.0; // iterations due before the current segment
+            let mut found = None;
+            for w in self.rate_schedule().windows(2) {
+                let ((ta, ra), (tb, rb)) = (w[0], w[1]);
+                let (ra, rb, span) = (ra.max(0.0), rb.max(0.0), tb - ta);
+                let area = (ra + rb) / 2.0 * span;
+                let wanted = k as f64 - before;
+                // Zero-rate segments start nothing, so they only shift time.
+                if area <= 0.0 || wanted > area {
+                    before += area;
+                    continue;
+                }
+                // Solve ra*s + slope*s^2/2 = wanted for s in [0, span]; this
+                // form is exact for slope 0 and stable for either slope sign.
+                let wanted = wanted.max(0.0);
+                let slope = (rb - ra) / span;
+                let root = (ra * ra + 2.0 * slope * wanted).max(0.0).sqrt();
+                let s = if wanted == 0.0 {
+                    0.0
+                } else {
+                    2.0 * wanted / (ra + root)
+                };
+                found = Some(ta + s.clamp(0.0, span));
+                break;
+            }
+            found?
+        };
+        (at < total).then_some(at)
     }
     /// Scheduled (fractional) user count at `t` seconds.
     pub fn target_at(&self, t: f64) -> f64 {
@@ -497,10 +586,30 @@ impl TestPlan {
                 return Err("Each stage needs at least 1s and at most 10,000 users".into());
             }
         }
-        if c.profile == Profile::ArrivalRate
-            && !(c.arrival_rate.is_finite() && (0.01..=100_000.0).contains(&c.arrival_rate))
-        {
-            return Err("Arrival rate must be 0.01–100,000 iterations/s".into());
+        if c.profile == Profile::ArrivalRate {
+            let rate_ok = |r: f64| r.is_finite() && (0.0..=MAX_ARRIVAL_RATE).contains(&r);
+            if c.rate_stages.is_empty() {
+                if !(rate_ok(c.arrival_rate) && c.arrival_rate >= 0.01) {
+                    return Err("Arrival rate must be 0.01–100,000 iterations/s".into());
+                }
+            } else {
+                if c.rate_stages.len() > STAGE_LIMIT {
+                    return Err(format!("Rate stages are limited to {STAGE_LIMIT}"));
+                }
+                if !rate_ok(c.arrival_rate)
+                    || c.rate_stages
+                        .iter()
+                        .any(|s| s.duration_secs == 0 || !rate_ok(s.target_rate))
+                {
+                    return Err(
+                        "Each rate stage needs at least 1s and a rate of 0–100,000 iterations/s; the start rate is 0–100,000"
+                            .into(),
+                    );
+                }
+                if c.peak_rate() <= 0.0 {
+                    return Err("Rate stages need a peak rate above 0 iterations/s".into());
+                }
+            }
         }
         if !(1..=10_000).contains(&c.max_users())
             || !(1..=86_400).contains(&c.total_secs())

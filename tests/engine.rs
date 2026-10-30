@@ -678,6 +678,70 @@ fn arrival_rate_drops_iterations_when_every_vu_is_busy() {
     assert_eq!(s.counts.error_rate(), 0.0);
 }
 
+/// Arrival rate ramping 0 to 60 it/s over 3 s: 90 scheduled iterations.
+fn rate_ramp_run(path: &str, max_vus: u32) -> Snapshot {
+    let rt = runtime();
+    let server = rt.block_on(fixture::spawn(0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = TestPlan::default();
+    plan.requests[0].url = format!("http://{}{path}", server.address);
+    plan.load.profile = Profile::ArrivalRate;
+    plan.load.arrival_rate = 0.0;
+    plan.load.rate_stages = vec![RateStage {
+        duration_secs: 3,
+        target_rate: 60.0,
+    }];
+    plan.load.users = max_vus;
+    plan.load.duration_secs = 30; // derived from the stages instead
+    plan.load.rps_limit = 1;
+    plan.load.think_ms = 5_000;
+    let mut handle = engine::start(&rt, plan, Path::new("."), dir.path().join("db")).unwrap();
+    let s = wait(&rt, &mut handle);
+    server.stop.cancel();
+    s
+}
+
+#[test]
+fn arrival_rate_stages_ramp_the_start_rate() {
+    let s = rate_ramp_run("/health", 20);
+    assert_eq!(s.state, RunState::Completed);
+    assert!(s.elapsed < 4.5, "runs for the stage total, {}", s.elapsed);
+    assert_eq!(s.target_rate, [(0.0, 0.0), (3.0, 60.0)]);
+    assert_eq!(s.arrival_rate, Some(0.0));
+    // The integral of the ramp: iteration k starts at sqrt(k / 10) s.
+    assert!(
+        (85..=90).contains(&s.counts.started),
+        "started {}",
+        s.counts.started
+    );
+    assert_eq!(s.counts.dropped_iterations, 0);
+    assert_eq!(s.counts.failed, 0);
+    assert_eq!(s.counts.started, s.counts.completed + s.counts.cancelled);
+    // Starts speed up: about 10 in the first second, 50 in the last.
+    let rate = |p: &Point| p.completed as f64 / p.interval_secs.max(0.001);
+    let first = s.series.front().expect("a first interval");
+    assert!(first.elapsed < 2.0, "first point at {}", first.elapsed);
+    let peak = s.series.iter().map(rate).fold(0.0, f64::max);
+    assert!(rate(first) < 25.0, "first interval {}/s", rate(first));
+    assert!(peak > 35.0, "peak interval {peak}/s");
+}
+
+#[test]
+fn arrival_rate_stages_still_drop_iterations_without_idle_vus() {
+    // ~100 ms per iteration: one VU serves ~10/s of the ramp to 60/s.
+    let s = rate_ramp_run("/body-delay", 1);
+    assert_eq!(s.state, RunState::Completed);
+    let offered = s.counts.started + s.counts.dropped_iterations;
+    assert!((85..=90).contains(&offered), "offered {offered}");
+    assert!(
+        s.counts.dropped_iterations >= 40,
+        "dropped {}",
+        s.counts.dropped_iterations
+    );
+    assert_eq!(s.counts.error_rate(), 0.0);
+    assert!(s.series.iter().all(|p| p.users <= 1));
+}
+
 #[test]
 fn failures_are_grouped_by_sanitized_reason() {
     let reasons = |s: &Snapshot| -> Vec<String> {
