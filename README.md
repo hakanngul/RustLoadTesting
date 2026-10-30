@@ -1,5 +1,7 @@
 # RustLoad
 
+[English](README.md) · [Türkçe](README_tr.md)
+
 RustLoad is a desktop app for testing HTTP APIs under load. You can build a
 sequence of requests, run it with concurrent virtual users, and inspect response
 times, throughput, and failures as the test runs.
