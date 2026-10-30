@@ -41,6 +41,15 @@ hazırlamadan önce [platform durumuna](#platform-durumu) bakın.
 
 ## Başlangıç
 
+### Hazır paketi indirme
+
+Bir sürüm yayımlandığında [GitHub Releases](https://github.com/hakanngul/RustLoadTesting/releases)
+sayfasında Apple Silicon ve Intel için macOS DMG'leri, Windows x64 ZIP'i, Linux
+x64 arşivi ve SHA-256 doğrulama dosyası bulunur. Kurulum gereksinimleri, imzalama
+durumu ve yayımlama adımları [release rehberinde](docs/releases.md) anlatılıyor.
+
+### Kaynak koddan çalıştırma
+
 Rust'ı [rustup](https://rustup.rs) ile kurun, ardından depoyu klonlayın:
 
 ```sh
@@ -310,10 +319,15 @@ Depolama yazmaları ayrı bir iş parçacığında yürütülür. Yürütme veya
 | macOS | Hedef platform; uygulamanın açılması, manuel kabul testleri ve paketleme henüz doğrulanmadı |
 | Windows | Çalıştırma ve paketleme doğrulanmadı |
 
-Mac üzerinde `bash scripts/package-macos.sh`, imzasız bir `dist/RustLoad.app`
-oluşturur. Betiğin Linux ortamında yalnızca sözdizimi kontrol edildi. İmzalama,
-notarization ve dağıtım yapılandırılmadı. CI'da Linux ve macOS
-işleri tanımlı; gerçek workflow sonuçlarını ayrıca kontrol edin.
+[Release workflow'u](.github/workflows/release.yml), sürüm etiketi gönderildiğinde
+üç işletim sistemi için test, derleme ve paketleme yapar. Yalnızca dört hedefin
+tamamı başarılı olduğunda yayımlar. Gerçek Actions sonuçlarını yerel doğrulama
+kayıtlarından ayrı değerlendirin.
+
+Mac üzerinde `bash scripts/package-macos.sh`, ad-hoc imzalı bir
+`dist/RustLoad.app` oluşturur. Developer ID imzası, Apple notarization ve Windows
+yayıncı sertifikası yapılandırılmadı. Platformların yerel arayüz kabul testleri
+ayrı bir kontroldür; ayrıntılar [release rehberinde](docs/releases.md).
 
 1.000 kullanıcıyla kapasite ve çizim katmanının uzun süreli bellek kullanımı
 henüz ölçülmedi. Flow, Pause, şablonlar, tarayıcı emülasyonu, histogram
@@ -329,4 +343,5 @@ karşılaştırmaları mevcut uygulamanın kapsamı dışında.
 - [Widgetlar ve kişisel düzenler](docs/widgets.md)
 - [Test planı](docs/test-plan.md)
 - [Doğrulama sonuçları ve kalan sürüm kontrolleri](docs/validation.md)
+- [Release paketleri ve yayımlama](docs/releases.md)
 - [İlk ürün gereksinimleri](docs/original-prd.md)
