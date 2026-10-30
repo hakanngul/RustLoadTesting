@@ -915,7 +915,9 @@ impl RustLoadApp {
         ui.heading("SLO thresholds");
         threshold_editor(ui, &mut self.plan.thresholds, &self.plan.requests, p);
         ui.add_space(16.0);
-        let fingerprint = format!("{:?}", self.plan);
+        // A relative CSV path resolves against the plan's folder, so the
+        // result belongs to that folder as well as to the plan.
+        let fingerprint = format!("{:?} {:?}", self.base(), self.plan);
         if ui.button("Validate plan").clicked() {
             let result = self.plan.validate(&self.base());
             match &result {
@@ -924,7 +926,7 @@ impl RustLoadApp {
             }
             self.validation = Some((fingerprint.clone(), result));
         }
-        // The result stays next to the button until the plan changes.
+        // The result stays next to the button until the plan or its folder changes.
         if let Some((checked, result)) = &self.validation
             && *checked == fingerprint
         {
