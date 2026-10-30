@@ -196,3 +196,55 @@ fn offline_reports_escape_html_and_csv_formulas() {
             .contains("'=1+2")
     );
 }
+
+#[test]
+fn history_written_before_byte_metrics_still_loads() {
+    // Rows in the v0.1 shape: no `bytes`, `bytes_rate` or other later fields.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("history.sqlite3");
+    let history = rustload::storage::History::open(&db).unwrap();
+    history.begin("1", &TestPlan::default()).unwrap();
+    drop(history);
+    let counts = r#"{"started":3,"completed":3,"successful":2,"failed":1,"cancelled":0,
+        "network_errors":0,"timeouts":0,"assertion_errors":0,"http_errors":1,
+        "status_errors":1,"body_errors":0,"preparation_errors":0}"#;
+    let latency = r#"{"samples":3,"p50":1.5,"p90":2.0,"p95":2.0,"p99":2.0,"mean":1.6}"#;
+    let point = format!(
+        r#"{{"interval_secs":1.0,"second":1,"elapsed":1.0,"users":1,"completed":3,
+        "successful":2,"failed":1,"latency":{latency}}}"#
+    );
+    let summary = format!(
+        r#"{{"run_id":"1","name":"Old run","state":"Completed","elapsed":1.0,
+        "active_users":0,"target_users":1,"rps":3.0,"counts":{counts},"latency":{latency},
+        "statuses":{{"200":2,"500":1}},"endpoints":[{{"id":1,"name":"HTTP Request",
+        "method":"GET","counts":{counts},"latency":{latency}}}],"series":[{point}],
+        "logs":[{{"elapsed":0.0,"level":"INFO","message":"Run started"}}],"issue":null}}"#
+    );
+    let connection = rusqlite::Connection::open(&db).unwrap();
+    connection
+        .execute(
+            "UPDATE runs SET state='Completed', summary=?1 WHERE id='1'",
+            [&summary],
+        )
+        .unwrap();
+    connection
+        .execute("INSERT INTO points VALUES ('1', 0, ?1)", [&point])
+        .unwrap();
+    let history = rustload::storage::History::open(&db).unwrap();
+    let (snapshot, _) = history.read("1").unwrap();
+    assert_eq!(snapshot.counts.completed, 3);
+    assert_eq!(snapshot.counts.bytes, 0);
+    assert_eq!(snapshot.bytes_rate, 0.0);
+    assert_eq!(snapshot.endpoints[0].counts.successful, 2);
+    let points = history.points("1").unwrap();
+    assert_eq!(points.len(), 1);
+    assert_eq!((points[0].completed, points[0].bytes), (3, 0));
+}
+
+#[test]
+fn byte_sizes_use_binary_units() {
+    assert_eq!(format_bytes(0.0), "0 B");
+    assert_eq!(format_bytes(1023.0), "1023 B");
+    assert_eq!(format_bytes(1536.0), "1.5 KiB");
+    assert_eq!(format_bytes(3.0 * 1024.0 * 1024.0), "3.0 MiB");
+}

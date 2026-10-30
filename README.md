@@ -115,8 +115,8 @@ On smaller windows, panels collapse or switch to tabs. See the
 
 ### Monitor
 
-Monitor shows the current run's request rate, P50/P95/P99 latency, error rate,
-and request count. Charts track throughput, interval latency, and active users.
+Monitor shows the current run's request rate, response data rate, P50/P95/P99
+latency, error rate, and request count. Charts track throughput, interval latency, and active users.
 HTTP status counts, endpoint results, and filterable logs help you inspect failures.
 Select a previous run in the sidebar to reopen its saved summary.
 
@@ -213,6 +213,7 @@ duration includes ramp-up. It does not generate an independent open arrival rate
 | Percentile cards | Whole-run HDR Histogram results |
 | Percentile charts | Independent interval histograms; percentiles are never averaged across intervals |
 | RPS card | Completions per second over a trailing five-second bucketed window, with proportionally weighted boundary buckets |
+| Data / sec card | Response body bytes per second over the same trailing window; only fully read responses count, headers are excluded |
 | Global RPS limit | Scheduled HTTP starts across all users; timer lag catch-up is bounded to 10 ms, and idle time does not bank burst credits |
 
 P50/P90/P95/P99 use HDR histograms recorded in microseconds and displayed in

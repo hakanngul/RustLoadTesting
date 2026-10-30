@@ -1,5 +1,25 @@
 # Validation evidence
 
+## Compatible history and Byte/s update
+
+Persisted metric structs (`Snapshot`, `Point`, `Counts`, `Latency`, `Endpoint`,
+`LogEntry`) now default missing fields. New: response body bytes per endpoint and
+interval, and a trailing-5s Data/sec rate (cards, endpoint table, reports).
+
+- `history_written_before_byte_metrics_still_loads` writes v0.1-shaped rows into
+  SQLite and reads them through `History`. Without the serde defaults it fails
+  with ``missing field `bytes` ``; with them it passes.
+- `response_bytes_are_counted_per_endpoint_and_interval`: real fixture traffic;
+  endpoint bytes equal completed × known body size (11 B and 16 KiB), endpoint
+  sums equal the total, and persisted interval bytes sum to the total.
+- Native Linux/Xvfb: Local Demo run in Monitor (Dark), Studio 2 (Light) and a
+  900×720 window. Monitor showed eight cards on one wide row and four rows of two
+  when narrow. Endpoint data matched body size × completions (Checkout 16 B × 61 =
+  976 B). The Studio 2 RPS card shows data/sec on its own line.
+
+Suite: **30 passed** (11 core/report, 9 dashboard-layout, 10 engine). Format,
+strict all-target Clippy and build pass. Linux only; macOS CI separate.
+
 ## Pacing accuracy and metrics lock update
 
 The global gate now advances from its schedule instead of the wake-up time, so

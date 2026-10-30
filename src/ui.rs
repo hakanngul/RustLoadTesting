@@ -633,6 +633,10 @@ impl RustLoadApp {
                 ),
                 ("Requests / sec", format!("{:.1}", self.live.rps)),
                 (
+                    "Data / sec",
+                    format!("{}/s", format_bytes(self.live.bytes_rate)),
+                ),
+                (
                     "P95 latency",
                     latency_label(&self.live.latency, self.live.latency.p95),
                 ),
@@ -793,17 +797,18 @@ impl RustLoadApp {
                     return;
                 }
                 if let Some(issue) = &s.issue { ui.colored_label(p.warning, issue); }
-                ui.label(RichText::new("RPS: last 5s · Percentiles: entire run, fully read responses · Latency in ms").small().color(p.muted));
+                ui.label(RichText::new("RPS and data/sec: last 5s · Percentiles: entire run, fully read responses · Latency in ms").small().color(p.muted));
                 let cards = [
                     ("Virtual Users", format!("{} / {}", s.active_users, s.target_users), p.success),
                     ("Requests / sec", format!("{:.1}", s.rps), p.accent),
+                    ("Data / sec", format!("{}/s", format_bytes(s.bytes_rate)), p.accent),
                     ("P50 Latency", latency_label(&s.latency, s.latency.p50), p.p50),
                     ("P95 Latency", latency_label(&s.latency, s.latency.p95), p.p95),
                     ("P99 Latency", latency_label(&s.latency, s.latency.p99), p.p99),
                     ("Error Rate", format!("{:.2}%", s.counts.error_rate()), p.error),
                     ("Request Count", s.counts.completed.to_string(), p.text),
                 ];
-                let columns = if ui.available_width() > 1100.0 { 7 } else if ui.available_width() > 750.0 { 4 } else { 2 };
+                let columns = if ui.available_width() > 1100.0 { cards.len() } else if ui.available_width() > 750.0 { 4 } else { 2 };
                 for row in cards.chunks(columns) {
                     ui.columns(columns, |cols| {
                         for (col, (label, value, color)) in cols.iter_mut().zip(row) { metric(col, p, label, value, *color); }
@@ -1226,6 +1231,7 @@ fn endpoint_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
                         "Completed",
                         "Errors",
                         "Avg RPS",
+                        "Data",
                         "P50",
                         "P90",
                         "P95",
@@ -1243,6 +1249,7 @@ fn endpoint_panel(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
                             "{:.1}",
                             e.counts.completed as f64 / s.elapsed.max(0.001)
                         ));
+                        ui.label(format_bytes(e.counts.bytes as f64));
                         for value in [e.latency.p50, e.latency.p90, e.latency.p95, e.latency.p99] {
                             ui.label(latency_label(&e.latency, value));
                         }

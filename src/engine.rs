@@ -460,6 +460,9 @@ fn apply_count(
         return;
     }
     count.completed += 1;
+    if let Ok((_, body, _)) = result {
+        count.bytes += body.len() as u64;
+    }
     if success {
         count.successful += 1;
     } else {
