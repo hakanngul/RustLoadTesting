@@ -1,5 +1,44 @@
 # Validation evidence
 
+## Queryable history database, data folder and history export
+
+`history.sqlite3` now has a schema version (`PRAGMA user_version` = 1) and four
+derived tables (`run_metrics`, `run_endpoints`, `run_slo`, `run_errors`) next
+to the unchanged `runs`/`points` JSON. Version 0 files are upgraded and
+backfilled on open; `History::finish` writes the rows in the same transaction.
+Test Runs gains **Open data folder** and **Export history…** (`VACUUM INTO`,
+background thread, refuses existing files).
+
+- Tests (`tests/history.rs`, real localhost fixture runs with warmup, two
+  requests (one failing), a secret header and query value and two SLOs):
+  `finished_run_fills_query_tables_and_refinish_replaces_them`,
+  `version_zero_database_migrates_backfills_once_and_stays_readable` (exact old
+  DDL, plus a NULL and a damaged summary that are skipped; a hand-edited value
+  survives the second open), `runs_finished_by_an_older_app_are_filled_on_next_open`,
+  `failed_migration_keeps_history_usable_and_reports_it` (foreign `run_metrics`
+  table: rollback, user_version stays 0, list/read/finish still work, short
+  reason), `export_writes_a_readable_copy_and_refuses_existing_files`. Each run
+  checks counts, P95, measured-window throughput, warmup kept apart, endpoint,
+  SLO and error rows against the Snapshot, and that no secret, `api_key`,
+  `http`, `127.0.0.1` or `?` reaches the new tables.
+- Native Linux/Xvfb (debug build, isolated home, Local Demo traffic only): a
+  real run's DB downgraded to the exact v0 layout opened with its run listed
+  and its summary reopening; Python's `sqlite3` then showed user_version 1 and
+  filled `run_metrics`/`run_endpoints`. A second Local Demo run added its rows
+  at finish. Export history wrote a copy (user_version 1, both runs, both
+  example queries from the user guide return rows); exporting again to the
+  same name was refused in red with the dialog kept open. Open data folder:
+  the container has no `xdg-open`, so the status line showed "No file manager
+  opener (xdg-open) is available. The data folder is …" and the app kept
+  running; actually opening a file manager is not verified here. A DB with a
+  conflicting `run_metrics` table showed the upgrade notice (found and fixed:
+  the first version printed the whole DDL that rusqlite appends to the error),
+  listed both runs and was left at user_version 0. Buttons checked at 230 and
+  170 px sidebar width, Dark and Light, Monitor and Report.
+
+Suite: **109 passed** (103 + 6). Format, strict all-target Clippy and build
+pass. Linux only; macOS `open` and Windows `explorer` paths are untested.
+
 ## Screenshot refresh after the header, chart and Report changes
 
 Every documentation screenshot was recaptured from the current build so it shows

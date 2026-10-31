@@ -567,6 +567,13 @@ start time (UTC), state, duration and request count.
 - **Open summary** loads a saved run into Monitor. All widgets then show that
   run, and **Export Report** exports it.
 - **↻** reloads the list.
+- **Open data folder** opens the folder that holds `history.sqlite3` in your
+  file manager. If the system has no opener, the status line says so and shows
+  the folder path.
+- **Export history…** asks for a file name (default
+  `rustload-history.sqlite3`) and writes a consistent SQLite copy of every
+  saved run in the background. It refuses a file that already exists; the
+  status line reports success or the error.
 
 There is no delete button in the app; see
 [Where is my data stored?](#where-is-my-data-stored).
@@ -860,13 +867,56 @@ data folder.
 
 ### Where is my data stored?
 
-- **Run history**: `history.sqlite3` in RustLoad's data folder. On Linux that is
-  `~/.local/share/rustload/` (or `$XDG_DATA_HOME/rustload/`); other systems use
-  their usual per-user application data folder.
+- **Run history**: `history.sqlite3` in RustLoad's data folder
+  (**Open data folder** in Test Runs opens it). On macOS that is
+  `~/Library/Application Support/dev.RustLoad.RustLoad/history.sqlite3`; on
+  Linux `~/.local/share/rustload/` (or `$XDG_DATA_HOME/rustload/`); Windows uses
+  its usual per-user application data folder.
 - **Preferences and layouts**: eframe's `app.ron`, on Linux in the same folder.
 - **Plans and reports**: wherever you save them.
 
 To clear history, close RustLoad and delete or move `history.sqlite3`.
+
+#### Querying the history
+
+`history.sqlite3` is a normal SQLite file. The tables `runs` and `points` keep
+each run's summary and per-second points as JSON (what the app reads). Next to
+them are plain tables for your own queries, filled when a run finishes:
+
+| Table | One row per | Main columns |
+| --- | --- | --- |
+| `run_metrics` | run | `name`, `started_at` (UTC), `state`, `elapsed`, `measured_secs`, `started`, `completed`, `successful`, `failed`, `cancelled`, `error_rate` (%), `throughput` (req/s over the measured window), `p50`, `p90`, `p95`, `p99`, `mean` (ms), `bytes`, `warmup_started`, `warmup_completed`, `dropped_iterations`, `slo_verdict` |
+| `run_endpoints` | request of a run | `request_id`, `name`, `method`, `completed`, `failed`, `error_rate`, `p50`–`p99`, `mean`, `bytes` |
+| `run_slo` | SLO of a run | `position`, `metric`, `scope_request_id`, `target`, `unit`, `actual`, `status` |
+| `run_errors` | failure reason of a request | `request_id`, `reason`, `count`, `first_at`, `last_at` |
+
+All of them use `run_id` (the run's id in `runs`). Warmup requests are not in
+the counts or latencies. Latency and error-rate columns are empty when nothing
+was measured. The tables contain only the redacted summary: names, methods,
+ids, numbers and the sanitized failure reasons, never secrets, headers, URLs or
+bodies. History files from older versions are upgraded when RustLoad opens
+them, and their earlier runs are filled in. If the upgrade fails, Test Runs
+shows a notice and runs still open and save.
+
+Example (P95 of the last 10 completed runs), in the `sqlite3` tool or any
+SQLite browser. Query an exported copy, or close RustLoad first:
+
+```sql
+SELECT started_at, name, p95, error_rate, throughput
+FROM run_metrics
+WHERE state = 'Completed'
+ORDER BY started_at DESC
+LIMIT 10;
+```
+
+Per request over time:
+
+```sql
+SELECT m.started_at, e.name, e.p95
+FROM run_endpoints e JOIN run_metrics m USING (run_id)
+WHERE e.name = 'Checkout'
+ORDER BY m.started_at DESC;
+```
 
 ### Limits you should know
 
