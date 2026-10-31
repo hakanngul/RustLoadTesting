@@ -1,5 +1,21 @@
 # Validation evidence
 
+## Status line moved into the header
+
+The status message and the load-generator CPU/RAM line moved from a bottom
+panel to the header, right under **Local Engine · v0.1.0** and the theme
+switch. The header grows by about 15 px and the ~50 px bottom strip is gone, so
+every workspace gets about 35 px more height. Long messages are cut with an
+ellipsis and show in full on hover; the capacity warning joins the CPU/RAM line
+in the warning colour. Message tones are unchanged. Because the header is drawn
+before the rest of the frame, a message changed later in the frame triggers one
+extra repaint.
+
+Native Linux/Xvfb: Studio and Studio 2 in Dark and Light at 1520×1040 and
+900×720; the Local Demo message is truncated at 900 px and its tooltip shows
+the full text; the amber authorization warning shows in place. Suite: 103
+passed; format, strict all-target Clippy and build pass. Linux only.
+
 ## k6 Demo preset
 
 **k6 Demo** (toolbar, next to **Local Demo**) loads a ready plan for Grafana

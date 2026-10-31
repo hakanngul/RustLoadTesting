@@ -100,8 +100,9 @@ Hemen altında araç çubuğu yer alır: **+ New**, **Open**, **Save**, **Save a
 **Import…**, **Local Demo**, **▶ Run Test**, **■ Stop**, **Reset view**,
 **Export Report** ve ardından düzen kontrolleri (**Layout: …**, **+ Widget**,
 **Edit layout**, **Layouts…**, **Save layout**). Planda kaydedilmemiş değişiklik
-varsa **Unsaved changes** yazısı görünür. Alttaki durum çubuğu son mesajı ve
-RustLoad'un kendi kullandığı CPU ile RAM'i gösterir.
+varsa **Unsaved changes** yazısı görünür. Sağ üstte, **Local Engine** yazısının
+altındaki durum satırı son mesajı (uzun mesajlar kısaltılır; tamamı için üzerine
+gelin) ve RustLoad'un kendi kullandığı CPU ile RAM'i gösterir.
 
 ![Local Demo planı açık Studio; Login isteğinin Extractors sekmesi seçili](screenshots/guide/01-studio-demo.png)
 
@@ -408,10 +409,10 @@ omission). Uygulanan yükün sabit kalması gerekiyorsa Arrival Rate kullanın.
 
 ### Başlatma ve durdurma
 
-1. Durum çubuğunun bildirdiği sorunları giderin. **▶ Run Test** önce planı
+1. Durum satırının bildirdiği sorunları giderin. **▶ Run Test** önce planı
    doğrular; bir sorun varsa "Validation: …" mesajı gösterir. Dikkat isteyen
-   durum çubuğu mesajları renklidir: hata kırmızı, uyarı (örneğin işaretlenmemiş
-   yetki kutusu) sarı, başarı yeşil. Test bitince durum çubuğu sonucu, tamamlanan
+   durum satırı mesajları renklidir: hata kırmızı, uyarı (örneğin işaretlenmemiş
+   yetki kutusu) sarı, başarı yeşil. Test bitince durum satırı sonucu, tamamlanan
    ve başarısız istek sayılarını ve SLO kararını gösterir.
 2. Yetki kutusunu işaretleyip **▶ Run Test**'e tıklayın. Studio'dan başlatırsanız
    Monitor'e geçilir; Studio 2'den başlatırsanız Studio 2'de kalırsınız.
@@ -826,7 +827,7 @@ planlanandan düşük kalmıştır ve karşılaştırmalar bu konuda uyarır.
 - **Extraction found nothing at …** / **JSON at … did not match**: yanıt
   senaryonun beklediği gibi değil.
 
-Durum çubuğuna da bakın: "Local capacity warning: results may be
+Durum satırına da bakın: "Local capacity warning: results may be
 generator-limited" uyarısı, RustLoad'un kendisinin CPU ya da bellek sıkıntısı
 çektiğini gösterir; bu durumda sayılar hedef kadar sizin bilgisayarınızı da
 anlatır.
@@ -862,7 +863,7 @@ ya da başka bir yere taşıyın.
 - Girdi olarak en fazla 10.000 kullanıcı ve saniyede 100.000 istek başlangıcı
   kabul edilir; bunlar doğrulama sınırlarıdır, ölçülmüş kapasite değildir.
   Kapasiteyi kendi donanımınızda ölçün.
-- Durum çubuğundaki CPU ve RAM, RustLoad'un kendi kullanımıdır. Local Demo
+- Durum satırındaki CPU ve RAM, RustLoad'un kendi kullanımıdır. Local Demo
   sunucusunu aynı işlemde çalıştırdığı için onun kullanımı da buna dahildir.
 
 ## 13. Metrik sözlüğü

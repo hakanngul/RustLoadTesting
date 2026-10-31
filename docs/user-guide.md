@@ -94,8 +94,9 @@ Below them is the toolbar: **+ New**, **Open**, **Save**, **Save as…**,
 **Import…**, **Local Demo**, **▶ Run Test**, **■ Stop**, **Reset view**,
 **Export Report**, then the layout controls (**Layout: …**, **+ Widget**,
 **Edit layout**, **Layouts…**, **Save layout**). **Unsaved changes** appears
-when the plan has edits you have not saved. The bottom status bar shows the
-last message and the CPU and RAM used by RustLoad itself.
+when the plan has edits you have not saved. The status line at the top right,
+under **Local Engine**, shows the last message (a long one is cut short; hover
+to read all of it) and the CPU and RAM used by RustLoad itself.
 
 ![Studio with the Local Demo plan loaded and the Login request's Extractors tab open](screenshots/guide/01-studio-demo.png)
 
@@ -393,11 +394,11 @@ omission). If you need the offered load to stay fixed, use Arrival Rate.
 
 ### Starting and stopping
 
-1. Fix any problem the status bar reports. **▶ Run Test** validates the plan
-   first and shows "Validation: …" if something is wrong. Status bar messages
+1. Fix any problem the status line reports. **▶ Run Test** validates the plan
+   first and shows "Validation: …" if something is wrong. Status line messages
    that need attention are coloured: red for errors, amber for warnings (such
    as a missing authorization tick), green for success. When a run ends the
-   status bar shows its state, completed and failed counts and SLO verdict.
+   status line shows its state, completed and failed counts and SLO verdict.
 2. Tick the authorization checkbox and click **▶ Run Test**. From Studio you go
    to Monitor; from Studio 2 you stay in Studio 2.
 3. While the run is active, plan and load editing is locked ("The running
@@ -801,7 +802,7 @@ Read **Failure reasons** in the status panel first:
 - **Extraction found nothing at …** / **JSON at … did not match**: the response
   is not what the scenario expects.
 
-Also check the status bar: "Local capacity warning: results may be
+Also check the status line: "Local capacity warning: results may be
 generator-limited" means RustLoad itself is short on CPU or memory, so the
 numbers describe your machine as much as the target.
 
@@ -834,7 +835,7 @@ To clear history, close RustLoad and delete or move `history.sqlite3`.
 - Up to 10,000 users and 100,000 request starts/s are accepted as input; these
   are validation limits, not measured capacity. Measure capacity on your own
   hardware.
-- CPU and RAM in the status bar are RustLoad's own. Local Demo runs its server
+- CPU and RAM in the status line are RustLoad's own. Local Demo runs its server
   in the same process, so its usage is included.
 
 ## 13. Glossary of metrics
