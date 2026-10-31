@@ -18,7 +18,11 @@ The desktop owns a separate Tokio runtime. A coordinator joins user tasks and
 publishes snapshots via watch, so a slow renderer cannot block HTTP workers.
 Metrics are recorded before publishing; dropping a UI snapshot cannot lose counts.
 One-second aggregates are emitted to a bounded persistence channel; a dedicated
-storage thread writes them to SQLite. Final summaries are also persisted.
+storage thread writes them to SQLite. Final summaries are also persisted, and
+in the same transaction the queryable `run_*` tables derived from them (schema
+versioned with `PRAGMA user_version`; see decisions). Opening the data folder
+and exporting history (`VACUUM INTO`) run on background threads, never in the
+render loop.
 
 Personal dashboards are a separate serializable model (`dashboard.rs`), stored in
 eframe preferences rather than TestPlan or SQLite run configuration. Stable page

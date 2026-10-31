@@ -419,6 +419,19 @@ Run history lives in `history.sqlite3` under RustLoad's platform local data
 directory. SQLite receives aggregates during the run and stores the final
 summary. If a write fails, the app reports it; the current results remain
 available for export. UI preferences use eframe's platform storage.
+On macOS the file is
+`~/Library/Application Support/dev.RustLoad.RustLoad/history.sqlite3`; on Linux
+`~/.local/share/rustload/history.sqlite3`.
+
+The **Test Runs** sidebar has **Open data folder** (opens that folder in the
+system file manager) and **Export history…** (writes a consistent SQLite copy;
+an existing file is never replaced). Besides the original JSON columns, the
+database has plain tables for your own queries: `run_metrics` (one row per
+run: counts, error rate, throughput over the measured window, P50–P99, mean,
+warmup, SLO verdict), `run_endpoints`, `run_slo` and `run_errors`. They hold
+only redacted summary values, never secrets, URLs or bodies. Older history
+files are upgraded and backfilled when the app opens them. See the user guide
+for an example query.
 
 | Item | Limit |
 | --- | --- |

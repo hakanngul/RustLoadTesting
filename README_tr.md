@@ -454,7 +454,19 @@ sunucunun kaynak kullanımını da içerir.
 `history.sqlite3` dosyasında tutulur. SQLite'a test sırasında toplu ölçümler,
 test sonunda da sonuç özeti yazılır. Yazma başarısız olursa uygulama bunu bildirir;
 mevcut sonuçları yine dışa aktarabilirsiniz. Arayüz tercihleri eframe'in platforma
-özgü depolamasında saklanır.
+özgü depolamasında saklanır. Dosya macOS'te
+`~/Library/Application Support/dev.RustLoad.RustLoad/history.sqlite3`, Linux'ta
+`~/.local/share/rustload/history.sqlite3` konumundadır.
+
+**Test Runs** kenar çubuğunda **Open data folder** (bu klasörü sistemin dosya
+yöneticisinde açar) ve **Export history…** (tutarlı bir SQLite kopyası yazar;
+var olan bir dosyanın üzerine asla yazmaz) düğmeleri vardır. Veritabanında
+asıl JSON sütunlarının yanında kendi sorgularınız için düz tablolar da bulunur:
+`run_metrics` (çalıştırma başına bir satır: sayaçlar, hata oranı, ölçüm
+penceresindeki throughput, P50–P99, ortalama, warmup, SLO sonucu),
+`run_endpoints`, `run_slo` ve `run_errors`. Bu tablolarda yalnızca maskelenmiş
+özet değerleri bulunur; secret, URL veya gövde yoktur. Eski geçmiş dosyaları
+uygulama açtığında yükseltilir ve doldurulur. Örnek sorgu kullanım kılavuzundadır.
 
 | Öğe | Sınır |
 | --- | --- |
