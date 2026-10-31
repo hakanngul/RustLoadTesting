@@ -583,6 +583,13 @@ kaydedilir ve Monitor'deki **Test Runs** listesinde en yenisi üstte olacak
 - **Open summary** kayıtlı bir çalıştırmayı Monitor'e yükler. Bütün widget'lar
   artık o çalıştırmayı gösterir ve **Export Report** onu dışa aktarır.
 - **↻** listeyi yeniler.
+- **Open data folder** `history.sqlite3` dosyasının bulunduğu klasörü dosya
+  yöneticisinde açar. Sistemde bunu yapacak bir araç yoksa durum satırı bunu
+  söyler ve klasörün yolunu gösterir.
+- **Export history…** bir dosya adı sorar (varsayılan
+  `rustload-history.sqlite3`) ve kayıtlı bütün çalıştırmaların tutarlı bir
+  SQLite kopyasını arka planda yazar. Var olan bir dosyayı kabul etmez; başarı
+  ya da hata durum satırında görünür.
 
 Uygulamada silme düğmesi yoktur; bkz.
 [Verilerim nerede saklanıyor?](#verilerim-nerede-saklanıyor)
@@ -885,14 +892,59 @@ izinlerini kontrol edin.
 
 ### Verilerim nerede saklanıyor?
 
-- **Çalıştırma geçmişi**: RustLoad veri klasöründeki `history.sqlite3`. Linux'ta
-  bu klasör `~/.local/share/rustload/` (ya da `$XDG_DATA_HOME/rustload/`); diğer
-  sistemler kullanıcıya ait olağan uygulama verisi klasörünü kullanır.
+- **Çalıştırma geçmişi**: RustLoad veri klasöründeki `history.sqlite3`
+  (Test Runs'taki **Open data folder** bu klasörü açar). macOS'te
+  `~/Library/Application Support/dev.RustLoad.RustLoad/history.sqlite3`;
+  Linux'ta `~/.local/share/rustload/` (ya da `$XDG_DATA_HOME/rustload/`);
+  Windows kullanıcıya ait olağan uygulama verisi klasörünü kullanır.
 - **Tercihler ve düzenler**: eframe'in `app.ron` dosyası; Linux'ta aynı klasörde.
 - **Planlar ve raporlar**: nereye kaydettiyseniz orada.
 
 Geçmişi temizlemek için RustLoad'u kapatın ve `history.sqlite3` dosyasını silin
 ya da başka bir yere taşıyın.
+
+#### Geçmişi sorgulama
+
+`history.sqlite3` sıradan bir SQLite dosyasıdır. `runs` ve `points` tabloları
+her çalıştırmanın özetini ve saniyelik noktalarını JSON olarak tutar (uygulama
+bunları okur). Yanlarında kendi sorgularınız için, çalıştırma bittiğinde
+doldurulan düz tablolar vardır:
+
+| Tablo | Satır başına | Başlıca sütunlar |
+| --- | --- | --- |
+| `run_metrics` | çalıştırma | `name`, `started_at` (UTC), `state`, `elapsed`, `measured_secs`, `started`, `completed`, `successful`, `failed`, `cancelled`, `error_rate` (%), `throughput` (ölçüm penceresinde istek/sn), `p50`, `p90`, `p95`, `p99`, `mean` (ms), `bytes`, `warmup_started`, `warmup_completed`, `dropped_iterations`, `slo_verdict` |
+| `run_endpoints` | çalıştırmadaki istek | `request_id`, `name`, `method`, `completed`, `failed`, `error_rate`, `p50`–`p99`, `mean`, `bytes` |
+| `run_slo` | çalıştırmadaki SLO | `position`, `metric`, `scope_request_id`, `target`, `unit`, `actual`, `status` |
+| `run_errors` | isteğin hata nedeni | `request_id`, `reason`, `count`, `first_at`, `last_at` |
+
+Hepsi `run_id` sütununu (çalıştırmanın `runs` içindeki kimliği) kullanır.
+Warmup istekleri sayaçlara ve gecikmelere girmez. Ölçüm yoksa gecikme ve hata
+oranı sütunları boştur. Tablolarda yalnızca maskelenmiş özet bulunur: adlar,
+metotlar, kimlikler, sayılar ve temizlenmiş hata nedenleri; secret, header, URL
+ya da gövde yoktur. Eski sürümlerin geçmiş dosyaları RustLoad onları açtığında
+yükseltilir ve önceki çalıştırmalar doldurulur. Yükseltme başarısız olursa Test
+Runs bir uyarı gösterir; çalıştırmalar yine açılır ve kaydedilir.
+
+Örnek (tamamlanan son 10 çalıştırmanın P95'i); `sqlite3` aracında ya da herhangi
+bir SQLite tarayıcısında. Dışa aktarılmış bir kopyayı sorgulayın ya da önce
+RustLoad'u kapatın:
+
+```sql
+SELECT started_at, name, p95, error_rate, throughput
+FROM run_metrics
+WHERE state = 'Completed'
+ORDER BY started_at DESC
+LIMIT 10;
+```
+
+Bir isteğin zaman içindeki değeri:
+
+```sql
+SELECT m.started_at, e.name, e.p95
+FROM run_endpoints e JOIN run_metrics m USING (run_id)
+WHERE e.name = 'Checkout'
+ORDER BY m.started_at DESC;
+```
 
 ### Bilmeniz gereken sınırlar
 

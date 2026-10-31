@@ -200,6 +200,19 @@
   draggable preview) in Studio and Studio 2.
 - Persisted metric structs default missing fields, so history written by older
   versions stays readable when fields are added.
+- The history database carries a schema version in `PRAGMA user_version`
+  (`storage::SCHEMA_VERSION`, now 1; 0 is the original `runs`/`points` file).
+  `runs.summary` (Snapshot JSON) and `points` stay the source of truth and are
+  written exactly as before, so older app versions still read the file. Schema
+  1 adds derived, queryable tables (`run_metrics`, `run_endpoints`, `run_slo`,
+  `run_errors`) holding only redacted Snapshot values. Opening upgrades a file
+  in one immediate transaction and backfills them from every readable summary;
+  later opens fill only runs that lack rows (finished by an older app) and are
+  otherwise a single read. `History::finish` replaces a run's rows in the same
+  transaction as its `runs` update. A failed upgrade rolls back, is reported in
+  the UI, and leaves listing, opening and saving runs working. A newer version
+  than the app knows is left untouched. Export uses `VACUUM INTO` (consistent
+  copy, no new dependency) and never replaces an existing file.
   Charts use independent one-second histogram buckets, never averaged percentiles.
 - A single global scheduled gate spaces starts; no accumulated burst credits.
   Slots advance from the schedule, not the wake-up time, so millisecond timer
