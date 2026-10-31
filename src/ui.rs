@@ -99,6 +99,12 @@ enum FileAction {
     Open,
     Save,
     Export,
+    ExportHistory,
+}
+/// Result of history file work done off the render thread.
+enum HistoryTask {
+    Exported(Result<PathBuf, String>),
+    FolderOpened(Result<(), String>),
 }
 
 pub struct RustLoadApp {
@@ -116,6 +122,13 @@ pub struct RustLoadApp {
     live_plan: TestPlan,
     show_live: bool,
     history: Vec<HistoryItem>,
+    /// Schema upgrade problem of the history database, shown in Test Runs.
+    history_issue: Option<String>,
+    history_tasks: (
+        std::sync::mpsc::Sender<HistoryTask>,
+        std::sync::mpsc::Receiver<HistoryTask>,
+    ),
+    history_exporting: bool,
     dirty: bool,
     acknowledged: bool,
     message: String,
@@ -181,6 +194,9 @@ impl RustLoadApp {
             live_plan: TestPlan::default(),
             show_live: true,
             history: vec![],
+            history_issue: None,
+            history_tasks: std::sync::mpsc::channel(),
+            history_exporting: false,
             dirty: false,
             acknowledged: false,
             message: "Create a plan or try Local Demo. All metrics come from real HTTP requests."
@@ -245,9 +261,80 @@ impl RustLoadApp {
         self.run.is_some() && !self.live.state.terminal()
     }
     fn refresh_history(&mut self) {
-        match History::open(&storage::default_db()).and_then(|h| h.list()) {
+        let history = History::open(&storage::default_db());
+        let issue = history
+            .as_ref()
+            .ok()
+            .and_then(|h| h.migration_issue().map(str::to_owned));
+        if let Some(issue) = &issue
+            && self.history_issue.as_ref() != Some(issue)
+        {
+            self.notify(
+                Tone::Warning,
+                format!("{issue}. Saved runs still open; the query tables are not updated."),
+            );
+        }
+        self.history_issue = issue;
+        match history.and_then(|h| h.list()) {
             Ok(list) => self.history = list,
-            Err(e) => self.message = format!("History: {e}"),
+            Err(e) => self.notify(Tone::Error, format!("History: {e}")),
+        }
+    }
+    /// Opens the data folder in the system file manager without blocking.
+    fn open_data_folder(&self, ctx: &egui::Context) {
+        let (tx, ctx) = (self.history_tasks.0.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let result = storage::open_in_file_manager(&storage::data_directory());
+            let _ = tx.send(HistoryTask::FolderOpened(result));
+            ctx.request_repaint();
+        });
+    }
+    /// Copies the history database to `path` on a background thread.
+    fn export_history(&mut self, path: &str, ctx: &egui::Context) -> Result<(), String> {
+        if path.trim().is_empty() {
+            return Err("Enter a file name for the history copy".into());
+        }
+        let target = std::path::absolute(path.trim()).map_err(|e| e.to_string())?;
+        if target.is_dir() {
+            return Err("Enter a file name for the history copy".into());
+        }
+        if target.exists() {
+            return Err(format!(
+                "{} already exists; choose a new file name",
+                target.display()
+            ));
+        }
+        let (tx, ctx) = (self.history_tasks.0.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let result = History::open(&storage::default_db())
+                .and_then(|h| h.export(&target))
+                .map(|()| target);
+            let _ = tx.send(HistoryTask::Exported(result));
+            ctx.request_repaint();
+        });
+        self.history_exporting = true;
+        self.message = "Exporting history…".into();
+        Ok(())
+    }
+    fn poll_history_tasks(&mut self) {
+        while let Ok(task) = self.history_tasks.1.try_recv() {
+            match task {
+                HistoryTask::Exported(result) => {
+                    self.history_exporting = false;
+                    match result {
+                        Ok(path) => self.notify(
+                            Tone::Success,
+                            format!("History exported to {}", path.display()),
+                        ),
+                        Err(e) => self.notify(Tone::Error, e),
+                    }
+                }
+                HistoryTask::FolderOpened(Ok(())) => {
+                    self.message =
+                        format!("Opened data folder {}", storage::data_directory().display());
+                }
+                HistoryTask::FolderOpened(Err(e)) => self.notify(Tone::Error, e),
+            }
         }
     }
     fn base(&self) -> PathBuf {
@@ -760,6 +847,38 @@ impl RustLoadApp {
                             self.refresh_history();
                         }
                     });
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .small_button("Open data folder")
+                            .on_hover_text(format!(
+                                "Show the history database folder\n{}",
+                                storage::data_directory().display()
+                            ))
+                            .clicked()
+                        {
+                            self.open_data_folder(ctx);
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.history_exporting,
+                                egui::Button::new("Export history…").small(),
+                            )
+                            .on_hover_text("Save a copy of the run history (SQLite)")
+                            .on_disabled_hover_text("Export in progress")
+                            .clicked()
+                        {
+                            self.file_action = Some(FileAction::ExportHistory);
+                            self.dialog_path = "rustload-history.sqlite3".into();
+                        }
+                    });
+                    if let Some(issue) = &self.history_issue {
+                        ui.label(
+                            RichText::new("⚠ Query tables not upgraded; saved runs still work.")
+                                .small()
+                                .color(p.error),
+                        )
+                        .on_hover_text(issue);
+                    }
                     ui.separator();
                     if !self.live.run_id.is_empty()
                         && ui
@@ -1155,6 +1274,7 @@ impl RustLoadApp {
                 FileAction::Open => "Open plan",
                 FileAction::Save => "Save plan",
                 FileAction::Export => "Export report",
+                FileAction::ExportHistory => "Export history",
             })
             .collapsible(false)
             .resizable(true)
@@ -1183,6 +1303,11 @@ impl RustLoadApp {
                     });
                     ui.label("Export replaces an existing file at the selected path.");
                 }
+                if action == FileAction::ExportHistory {
+                    ui.label(
+                        "Writes a SQLite copy of every saved run. An existing file is never replaced.",
+                    );
+                }
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
                         self.file_action = None;
@@ -1202,6 +1327,7 @@ impl RustLoadApp {
                                 }
                                 report::export(Path::new(&path), &self.export_format, &summary, &self.report_plan, &points)
                             }
+                            FileAction::ExportHistory => self.export_history(&path, ui.ctx()),
                         };
                         match result {
                             Ok(()) => {
@@ -1210,6 +1336,9 @@ impl RustLoadApp {
                                     self.message =
                                         format!("{} report saved to {path}", self.export_format);
                                 }
+                            }
+                            Err(e) if action == FileAction::ExportHistory => {
+                                self.notify(Tone::Error, e)
                             }
                             Err(e) => self.message = e,
                         }
@@ -1268,6 +1397,7 @@ impl eframe::App for RustLoadApp {
             }
             self.resource_sample = std::time::Instant::now();
         }
+        self.poll_history_tasks();
         if let Some(run) = &mut self.run
             && run.snapshots.has_changed().unwrap_or(true)
         {
