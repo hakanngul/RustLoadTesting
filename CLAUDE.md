@@ -66,6 +66,11 @@ bloke etme. Mevcut snapshot/persistence akışını inceleyerek geliştir.
 - **Studio 2:** alternatif çalışma tezgâhı; aynı TestPlan, seçili istek ve motoru
   paylaşır. Buradan Run, Studio 2'de kalır. Ayrı motor veya kopya plan üretme.
 - **Monitor:** canlı sonuçlar, geçmiş çalıştırmalar ve raporlama.
+- **Report:** Monitor'de açık çalıştırmanın sabit, salt okunur özeti
+  (`src/ui/run_report.rs`): sonuç bandı, ana kartlar, ortak eksenli zaman
+  çizelgesi, hata/status/en yavaş istek, sıralanabilir endpoint tablosu, log
+  çekmecesi. Dashboard düzeni yoktur; `Workspace::Monitor` içinde
+  `Preferences.report` ile açılır ve Monitor sayfalarına dokunmaz.
 - Üç çalışma alanının da kişisel düzenleri vardır ve aynı dashboard kodunu
   (`dashboard::Workspace` ile parametreli) paylaşır: widget ekle/gizle/geri
   getir/sil, sürükleyerek veya menüyle sırala, dock'lar, grid genişlikleri,

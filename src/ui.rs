@@ -1,6 +1,7 @@
 mod compare;
 mod dashboard;
 mod import;
+mod run_report;
 mod studio2;
 
 use crate::dashboard::{DashboardPage, Dashboards, Dock, Span, Widget, WidgetKind, Workspace};
@@ -39,6 +40,9 @@ pub struct Preferences {
     /// Run comparison noise band in percent; `None` uses the default.
     #[serde(default)]
     pub compare_noise_pct: Option<f64>,
+    /// The Report view is open (it shows the run Monitor has open).
+    #[serde(default)]
+    pub report: bool,
 }
 fn monitor_dashboards() -> Dashboards {
     Workspace::Monitor.default_dashboards()
@@ -56,6 +60,7 @@ impl Default for Preferences {
             monitor_dashboards: monitor_dashboards(),
             studio_dashboards: studio_dashboards(),
             compare_noise_pct: None,
+            report: false,
         }
     }
 }
@@ -118,6 +123,9 @@ pub struct RustLoadApp {
     message_tone: Option<(Tone, String)>,
     /// Widget shown enlarged in a window (workspace and kind); not saved.
     expanded: Option<(Workspace, WidgetKind)>,
+    /// Report endpoint table order (column, descending) and log drawer state.
+    report_sort: (run_report::SortBy, bool),
+    report_logs_open: bool,
     /// Last "Validate plan" result and the plan it was computed for.
     validation: Option<(String, Result<(), String>)>,
     file_action: Option<FileAction>,
@@ -179,6 +187,8 @@ impl RustLoadApp {
                 .into(),
             message_tone: None,
             expanded: None,
+            report_sort: (run_report::SortBy::P95, true),
+            report_logs_open: false,
             validation: None,
             file_action: None,
             dialog_path: String::new(),
@@ -226,6 +236,10 @@ impl RustLoadApp {
                     format!("Could not reopen the last plan ({e}); starting a new plan.");
             }
         }
+    }
+    /// Report replaces Monitor's view; both read the run Monitor has open.
+    fn report_open(&self) -> bool {
+        self.workspace == Workspace::Monitor && self.prefs.report
     }
     fn busy(&self) -> bool {
         self.run.is_some() && !self.live.state.terminal()
@@ -311,6 +325,8 @@ impl RustLoadApp {
                 self.show_live = true;
                 if self.workspace != Workspace::Studio2 {
                     self.workspace = Workspace::Monitor;
+                    // Run from Studio still lands on the live Monitor.
+                    self.prefs.report = false;
                 }
                 self.message = "Run started. Charts and logs reflect real HTTP traffic.".into();
             }
@@ -429,28 +445,32 @@ impl RustLoadApp {
                         );
                     });
                     ui.add_space(32.0);
+                    let report = self.report_open();
                     for (label, page) in [
-                        ("Studio", Workspace::Studio),
-                        ("Studio 2", Workspace::Studio2),
-                        ("Monitor", Workspace::Monitor),
+                        ("Studio", Some(Workspace::Studio)),
+                        ("Studio 2", Some(Workspace::Studio2)),
+                        ("Monitor", Some(Workspace::Monitor)),
+                        ("Report", None),
                     ] {
+                        let active = match page {
+                            Some(page) => self.workspace == page && !report,
+                            None => report,
+                        };
                         if ui
                             .add(
-                                egui::Button::new(RichText::new(label).color(
-                                    if self.workspace == page {
-                                        p.on_accent
-                                    } else {
-                                        p.text
-                                    },
-                                ))
-                                .fill(if self.workspace == page {
-                                    p.accent
+                                egui::Button::new(RichText::new(label).color(if active {
+                                    p.on_accent
                                 } else {
-                                    p.elevated
-                                }),
+                                    p.text
+                                }))
+                                .fill(if active { p.accent } else { p.elevated }),
                             )
                             .clicked()
                         {
+                            // Report reads the run Monitor has open, so it lives
+                            // in the Monitor workspace with its own view.
+                            self.prefs.report = page.is_none();
+                            let page = page.unwrap_or(Workspace::Monitor);
                             self.workspace = page;
                             self.prefs.workspace = page;
                             if page == Workspace::Studio2 && self.tab == 2 {
@@ -604,7 +624,9 @@ impl RustLoadApp {
                         self.file_action = Some(FileAction::Export);
                         self.dialog_path = "rustload-report.html".into();
                     }
-                    self.dashboard_toolbar(ui, p, self.workspace);
+                    if !self.report_open() {
+                        self.dashboard_toolbar(ui, p, self.workspace);
+                    }
                     ui.label(
                         RichText::new(if self.dirty { "Unsaved changes" } else { "" })
                             .color(p.warning)
@@ -1308,6 +1330,10 @@ impl eframe::App for RustLoadApp {
                 self.studio(ctx, p);
             }
             Workspace::Studio2 => self.studio2(ctx, p),
+            Workspace::Monitor if self.report_open() => {
+                self.sidebar(ctx, p);
+                self.report(ctx, p);
+            }
             Workspace::Monitor => {
                 self.sidebar(ctx, p);
                 self.monitor(ctx, p);

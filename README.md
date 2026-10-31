@@ -155,6 +155,15 @@ a tolerance, not a statistical significance test. Runs with different users,
 duration, load profile, RPS cap, think time, timeout or request steps are still
 compared, with a warning. **Swap** exchanges baseline and candidate.
 
+### Report
+
+**Report**, next to Monitor, shows the open run as a fixed summary: a
+PASSED/FAILED verdict band with each SLO, four key cards, a timeline whose
+request rate, latency and user charts share one time axis (warmup shaded, SLO
+line drawn), failure reasons, HTTP status, the slowest request, a sortable
+endpoint table and a folded log drawer. It never changes Monitor's layout. See
+the [user guide](docs/user-guide.md#report).
+
 Dark and Light themes are available throughout the app. You can also view
 [Studio in Light](docs/screenshots/studio-light.png),
 [Studio 2 in Light](docs/screenshots/studio2-light.png), and
