@@ -1428,3 +1428,35 @@ fn openapi_yaml_unquoted_versions_are_accepted() {
     );
     assert!(from_openapi(b"openapi: 4.0\npaths: {}\n", 1, "").is_err());
 }
+
+#[test]
+fn import_file_messages_name_the_path() {
+    assert_eq!(
+        read_import_file("").unwrap_err(),
+        "Choose a file path first"
+    );
+    assert_eq!(
+        read_import_file("   ").unwrap_err(),
+        "Choose a file path first"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("missing.yaml");
+    let missing = missing.to_str().unwrap();
+    let error = read_import_file(missing).unwrap_err();
+    assert!(
+        error.starts_with(&format!("Cannot read {missing}: ")),
+        "{error}"
+    );
+    let folder = dir.path().to_str().unwrap();
+    assert!(
+        read_import_file(folder)
+            .unwrap_err()
+            .contains("is a folder")
+    );
+    let file = dir.path().join("spec.yaml");
+    std::fs::write(&file, "openapi: 3.0.0\n").unwrap();
+    assert_eq!(
+        read_import_file(&format!(" {} ", file.display())).unwrap(),
+        b"openapi: 3.0.0\n"
+    );
+}

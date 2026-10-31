@@ -417,8 +417,10 @@ impl RustLoadApp {
                     // fixed Monitor layout did; docks and Studio 2 tiles fill.
                     .auto_shrink([false, widget.dock == Dock::Main && !page.dashboard_only])
                     .show(ui, |ui| {
-                        let plot_height = (height - edit_height - 110.0).max(40.0);
-                        self.widget_body(ui, p, ws, widget.kind, plot_height, 200.0);
+                        // Charts and logs fill the viewport whatever their
+                        // header wraps to.
+                        let body = (height - edit_height - 12.0).max(120.0);
+                        self.widget_body(ui, p, ws, widget.kind, body);
                     });
             };
             let tile = ui.max_rect();
@@ -438,23 +440,34 @@ impl RustLoadApp {
                 body(ui);
                 // Shown while the pointer is over the tile, in its own layer so
                 // the widget's scroll area or plot cannot take the click. Modal
-                // windows and menus sit above that layer.
+                // windows and menus sit above that layer. It sits on the tile's
+                // top border, across the frame margin, so it never covers the
+                // widget's own controls (Follow, Reset zoom, series toggles).
                 let area = egui::Id::new(("expand_widget", ws, page.id, widget.id));
+                let button = ui.ctx().memory(|m| m.area_rect(area));
                 let over_tile = ui.ctx().pointer_hover_pos().is_some_and(|pos| {
-                    tile.contains(pos)
-                        && ui.clip_rect().contains(pos)
+                    ((tile.contains(pos) && ui.clip_rect().contains(pos))
+                        || button.is_some_and(|b| b.contains(pos)))
                         // Not while a window, menu or the button covers it.
                         && ui.ctx().layer_id_at(pos).is_some_and(|layer| {
                             layer == ui.layer_id() || layer.id == area
                         })
                 });
                 if over_tile {
+                    // Kept inside the visible part when the tile is scrolled.
+                    let top = tile.top().max(ui.clip_rect().top() + 8.0);
                     let shown = egui::Area::new(area)
                         .order(egui::Order::Middle)
-                        .fixed_pos(tile.right_top() + egui::vec2(-66.0, 8.0))
+                        .pivot(egui::Align2::RIGHT_CENTER)
+                        .fixed_pos(egui::pos2(tile.right() - 14.0, top))
                         .show(ui.ctx(), |ui| {
-                            let expand = egui::Button::new(RichText::new("Expand").size(11.0))
-                                .wrap_mode(egui::TextWrapMode::Extend);
+                            let expand =
+                                egui::Button::new(RichText::new("Expand").size(11.0).color(p.text))
+                                    .small()
+                                    .fill(p.elevated)
+                                    .stroke((1.0, p.border))
+                                    .corner_radius(6)
+                                    .wrap_mode(egui::TextWrapMode::Extend);
                             ui.add(expand)
                                 .on_hover_text("Show this widget large; Esc or Close returns")
                                 .clicked()
@@ -475,21 +488,20 @@ impl RustLoadApp {
         p: Palette,
         ws: Workspace,
         kind: WidgetKind,
-        plot_height: f32,
-        log_height: f32,
+        height: f32,
     ) {
         let s = self.widget_source(ws);
         match kind {
-            WidgetKind::Throughput => chart(ui, s, p, Chart::Throughput, plot_height),
-            WidgetKind::RequestsPerSecond => chart(ui, s, p, Chart::Rps, plot_height),
-            WidgetKind::Latency => chart(ui, s, p, Chart::Latency, plot_height),
-            WidgetKind::ActiveUsers => chart(ui, s, p, Chart::Users, plot_height),
-            WidgetKind::Logs => self.logs_for(ui, p, ws != Workspace::Monitor, log_height),
+            WidgetKind::Throughput => chart(ui, s, p, Chart::Throughput, height),
+            WidgetKind::RequestsPerSecond => chart(ui, s, p, Chart::Rps, height),
+            WidgetKind::Latency => chart(ui, s, p, Chart::Latency, height),
+            WidgetKind::ActiveUsers => chart(ui, s, p, Chart::Users, height),
+            WidgetKind::Logs => self.logs_for(ui, p, ws != Workspace::Monitor, height),
             WidgetKind::StatusCodes => status_panel(ui, s, p),
             WidgetKind::Endpoints => endpoint_panel(ui, s, p),
             WidgetKind::LiveMetrics => self.studio2_metrics(ui, p, ws),
             WidgetKind::KpiCards => kpi_cards(ui, s, p),
-            WidgetKind::LatencyHistogram => latency_histogram(ui, s, p, plot_height),
+            WidgetKind::LatencyHistogram => latency_histogram(ui, s, p, height),
             WidgetKind::Unknown => {
                 ui.label("Unavailable widget");
             }
@@ -533,8 +545,9 @@ impl RustLoadApp {
                 .auto_shrink([false, !fill])
                 .show(ui, |ui| {
                     ui.push_id(("expanded", ws), |ui| {
-                        let height = (size.y - 150.0).max(120.0);
-                        self.widget_body(ui, p, ws, kind, height, height - 40.0);
+                        // Charts and logs take the window below its title row.
+                        let height = (size.y - 48.0).max(160.0);
+                        self.widget_body(ui, p, ws, kind, height);
                     });
                 });
         });

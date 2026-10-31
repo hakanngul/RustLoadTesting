@@ -102,7 +102,7 @@ impl RustLoadApp {
                 });
             });
             if self.report_logs_open {
-                self.logs_for(ui, p, false, 240.0);
+                self.logs_for(ui, p, false, 320.0);
             }
         });
     }
@@ -526,20 +526,6 @@ fn timeline(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
             });
         ui.label(RichText::new("Elapsed seconds · grey band: warmup, not measured").size(11.0).color(p.muted));
     });
-}
-
-/// 1-2-5 steps for about five labelled y lines. egui_plot's default uses
-/// powers of ten only, which leaves a 0–900 ms axis with a single label.
-fn nice_steps(input: egui_plot::GridInput) -> [f64; 3] {
-    let range = (input.bounds.1 - input.bounds.0).abs().max(f64::EPSILON);
-    let rough = range / 5.0;
-    let magnitude = 10_f64.powf(rough.log10().floor());
-    let step = [1.0, 2.0, 5.0, 10.0]
-        .into_iter()
-        .map(|m| m * magnitude)
-        .find(|s| *s >= rough)
-        .unwrap_or(10.0 * magnitude);
-    [step / 5.0, step, step * 5.0]
 }
 
 /// One of the timeline charts: x axis and cursor linked to the others, the

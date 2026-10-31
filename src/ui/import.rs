@@ -2,8 +2,8 @@
 //! document into the plan.
 use super::*;
 use crate::import::{
-    HAR_SIZE_LIMIT, IMPORT_LIMIT, Imported, OpenApiSpec, ServerChoice, from_curl, from_har,
-    load_openapi,
+    IMPORT_LIMIT, Imported, OpenApiSpec, ServerChoice, from_curl, from_har, load_openapi,
+    read_import_file,
 };
 use std::collections::BTreeSet;
 
@@ -100,12 +100,7 @@ impl ImportDialog {
         if self.source == Source::Curl {
             return from_curl(&self.curl, first_id);
         }
-        let path = self.path.trim();
-        let meta = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
-        if meta.len() > HAR_SIZE_LIMIT {
-            return Err("File exceeds 50 MiB".into());
-        }
-        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let bytes = read_import_file(&self.path)?;
         from_har(&bytes, first_id, self.api_only)
     }
 
@@ -113,11 +108,7 @@ impl ImportDialog {
     /// folder).
     fn load_openapi(&self) -> Result<OpenApiSpec, String> {
         let path = self.path.trim();
-        let meta = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
-        if meta.len() > HAR_SIZE_LIMIT {
-            return Err("File exceeds 50 MiB".into());
-        }
-        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let bytes = read_import_file(path)?;
         let dir = std::path::Path::new(path)
             .parent()
             .filter(|d| !d.as_os_str().is_empty())

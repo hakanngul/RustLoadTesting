@@ -565,7 +565,7 @@ failing" yazar; test bitince sonuç gösterilir:
 
 Latency eşikleri tüm-test histogramlarını, hata oranı tamamlanan istekleri
 kullanır; throughput ise 5 saniyelik kart değeri değil, tamamlanan isteklerin
-ölçüm süresine bölümüdür. İptal edilen ya da başarısız olan testler kısmi olarak
+warmup sonrası ölçüm süresine bölümüdür. İptal edilen ya da başarısız olan testler kısmi olarak
 işaretlenir. Sonuç geçmişe kaydedilir ve tüm rapor biçimlerinde yer alır.
 
 **Import…** penceresinde **Replace current requests** seçerseniz tek bir isteğe
@@ -623,7 +623,7 @@ Uygulamada silme düğmesi yoktur; bkz.
   listelenir.
 
 Karşılaştırmadaki throughput ve veri değerleri 5 saniyelik kart değeri değil,
-tüm testin ortalamasıdır (tamamlanan ÷ geçen süre).
+ölçüm penceresinin ortalamasıdır (tamamlanan ÷ warmup sonrası geçen süre).
 
 ### Rapor dışa aktarma
 
@@ -751,8 +751,9 @@ ayrıdır: bir planı kaydetmek düzenleri içermez.
 
 Alt ya da sağ panelin kenarını sürükleyerek boyutunu değiştirebilirsiniz.
 
-Fare bir widget'ın üzerindeyken (**Edit layout** dışında) sağ üst köşesinde
-**Expand** belirir. Widget'ı pencerenin ortasında büyük olarak, canlı şekilde
+Fare bir widget'ın üzerindeyken (**Edit layout** dışında) üst kenarının
+sağında **Expand** belirir; böylece widget'ın kendi kontrollerini kapatmaz.
+Widget'ı pencerenin ortasında büyük olarak, canlı şekilde
 açar; **Close**, Esc ya da dışarıya tıklama geri döndürür. Düzen değişmez.
 
 ### Widget ekleme ve sayfaları yönetme
@@ -973,7 +974,7 @@ ORDER BY m.started_at DESC;
 | **Error rate** | Başarısız ÷ tamamlanan, % |
 | **Requests / sec (kart)** | Son 5 saniyede saniye başına tamamlanma |
 | **Throughput (grafik)** | Test boyunca aralık başına saniyedeki tamamlanma |
-| **Throughput (SLO, karşılaştırma)** | Tüm testte tamamlanan istek ÷ ölçüm süresi |
+| **Throughput (SLO, karşılaştırma)** | Tamamlanan istek ÷ ölçüm süresi (warmup sonrası) |
 | **Latency** | HTTP isteğinin başlamasından yanıt gövdesinin tamamen okunmasına kadar geçen süre. Pacing ve think time dahil değildir. Yalnızca tamamen okunan yanıtlar sayılır; timeout'lar ve ağ hataları girmez |
 | **P50 / P90 / P95 / P99** | Yanıtların %50/90/95/99'u en az bu kadar hızlı. Kartlar ve SLO'lar tüm-test histogramını, grafikler aralık başına ayrı histogramları kullanır |
 | **Mean / Average Response Time** | Ölçülen yanıtların aritmetik ortalama latency'si |

@@ -549,7 +549,7 @@ the end it shows the verdict:
 
 Latency thresholds use the whole-run histograms, error rate uses completed
 requests, and throughput is completed requests divided by the measured time
-(not the 5-second card). Cancelled or failed runs are marked as partial. The
+after warmup (not the 5-second card). Cancelled or failed runs are marked as partial. The
 verdict is saved in history and included in all report formats.
 
 When you import with **Replace current requests**, thresholds scoped to single
@@ -604,8 +604,8 @@ The **Run comparison** view shows:
 - **Per request · change from baseline (hover for values)**, matched by
   request ID, with requests that exist in only one run listed below.
 
-Throughput and data in a comparison are averages over the whole run
-(completed ÷ elapsed), not the 5-second card value.
+Throughput and data in a comparison are averages over the measured window
+(completed ÷ time after warmup), not the 5-second card value.
 
 ### Exporting reports
 
@@ -731,10 +731,10 @@ saving a plan does not include them.
 
 Drag the edge of the bottom or right panel to resize it.
 
-**Expand** appears in a widget's top-right corner while the pointer is over it
-(outside **Edit layout**). It opens the widget large in the middle of the
-window, still live; **Close**, Esc or a click outside returns. The layout is
-not changed.
+**Expand** appears on the right of a widget's top edge while the pointer is
+over it (outside **Edit layout**), so it never covers the widget's own
+controls. It opens the widget large in the middle of the window, still live;
+**Close**, Esc or a click outside returns. The layout is not changed.
 
 ### Add widgets and manage pages
 
@@ -945,7 +945,7 @@ ORDER BY m.started_at DESC;
 | **Error rate** | Failed ÷ completed, in % |
 | **Requests / sec (card)** | Completions per second over the last 5 s |
 | **Throughput (chart)** | Completions per second per interval over the run |
-| **Throughput (SLO, comparison)** | Completed requests ÷ measured time over the whole run |
+| **Throughput (SLO, comparison)** | Completed requests ÷ measured time (the run after warmup) |
 | **Latency** | From starting the HTTP request until the response body is fully read. Excludes pacing and think time. Only fully read responses count; timeouts and network errors do not |
 | **P50 / P90 / P95 / P99** | 50/90/95/99 % of responses were at least this fast. Cards and SLOs use the whole-run histogram; charts use separate per-interval histograms |
 | **Mean / Average Response Time** | Arithmetic mean latency of measured responses |
