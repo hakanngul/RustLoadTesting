@@ -432,20 +432,9 @@ fn timeline(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
         let header = PlotHeader::show(ui, p, "Requests / sec", ("report_rps", &s.run_id), &series);
         let total = rate(|v| v.completed);
         let peak = total.iter().map(|v| v[1]).fold(1.0, f64::max);
-        Plot::new("report_rps")
-            .id(header.id)
-            .height(170.0)
-            .include_y(0.0)
-            .link_axis(link, [true, false])
-            .link_cursor(link, [true, false])
-            // Same axis width on all three keeps their time axes aligned.
-            .y_axis_min_width(48.0)
-            .y_grid_spacer(egui_plot::uniform_grid_spacer(nice_steps))
+        timeline_plot("report_rps", header.id, 170.0, link)
             .show(ui, |plot| {
-                if header.reset {
-                    plot.set_auto_bounds(true);
-                }
-                shade_warmup(plot, warmup_end, peak * 1.1, p);
+                start_plot(plot, &header, warmup_end, peak * 1.1, p);
                 if header.visible("Total") {
                     plot.line(Line::new("Total", PlotPoints::from(total)).color(p.accent).width(2.0_f32));
                 }
@@ -494,26 +483,15 @@ fn timeline(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
                 .color(p.muted),
             );
         }
-        let mut plot = Plot::new("report_latency")
-            .id(header.id)
-            .height(190.0)
-            .include_y(0.0)
-            .link_axis(link, [true, false])
-            .link_cursor(link, [true, false])
-            // Same axis width on all three keeps their time axes aligned.
-            .y_axis_min_width(48.0)
-            .y_grid_spacer(egui_plot::uniform_grid_spacer(nice_steps));
+        let mut plot = timeline_plot("report_latency", header.id, 190.0, link);
         if header.visible("SLO limit") {
             for (_, value) in &limits {
                 plot = plot.include_y(*value * 1.05);
             }
         }
         plot.show(ui, |plot| {
-            if header.reset {
-                plot.set_auto_bounds(true);
-            }
             let top = limits.iter().map(|l| l.1).fold(peak, f64::max) * 1.1;
-            shade_warmup(plot, warmup_end, top, p);
+            start_plot(plot, &header, warmup_end, top, p);
             for (name, color, f) in [
                 ("P50", p.p50, (|v: &Point| v.latency.p50) as fn(&Point) -> f64),
                 ("P95", p.p95, |v: &Point| v.latency.p95),
@@ -539,20 +517,9 @@ fn timeline(ui: &mut egui::Ui, s: &Snapshot, p: Palette) {
         let header = PlotHeader::show(ui, p, "Active virtual users", ("report_users", &s.run_id), &[("Users", p.success)]);
         let users: Vec<[f64; 2]> = s.series.iter().map(|v| [v.elapsed, v.users as f64]).collect();
         let peak = users.iter().map(|v| v[1]).fold(1.0, f64::max);
-        Plot::new("report_users")
-            .id(header.id)
-            .height(90.0)
-            .include_y(0.0)
-            .link_axis(link, [true, false])
-            .link_cursor(link, [true, false])
-            // Same axis width on all three keeps their time axes aligned.
-            .y_axis_min_width(48.0)
-            .y_grid_spacer(egui_plot::uniform_grid_spacer(nice_steps))
+        timeline_plot("report_users", header.id, 90.0, link)
             .show(ui, |plot| {
-                if header.reset {
-                    plot.set_auto_bounds(true);
-                }
-                shade_warmup(plot, warmup_end, peak * 1.1, p);
+                start_plot(plot, &header, warmup_end, peak * 1.1, p);
                 if header.visible("Users") {
                     plot.line(Line::new("Users", PlotPoints::from(users)).color(p.success).width(2.0_f32));
                 }
@@ -573,6 +540,33 @@ fn nice_steps(input: egui_plot::GridInput) -> [f64; 3] {
         .find(|s| *s >= rough)
         .unwrap_or(10.0 * magnitude);
     [step / 5.0, step, step * 5.0]
+}
+
+/// One of the timeline charts: x axis and cursor linked to the others, the
+/// same y axis width so their time axes line up, 1-2-5 y labels.
+fn timeline_plot(name: &str, id: egui::Id, height: f32, link: egui::Id) -> Plot<'_> {
+    Plot::new(name)
+        .id(id)
+        .height(height)
+        .include_y(0.0)
+        .link_axis(link, [true, false])
+        .link_cursor(link, [true, false])
+        .y_axis_min_width(48.0)
+        .y_grid_spacer(egui_plot::uniform_grid_spacer(nice_steps))
+}
+
+/// Applies a pending "Reset zoom" and shades the warmup up to `top`.
+fn start_plot(
+    plot: &mut egui_plot::PlotUi,
+    header: &PlotHeader,
+    warmup_end: Option<f64>,
+    top: f64,
+    p: Palette,
+) {
+    if header.reset {
+        plot.set_auto_bounds(true);
+    }
+    shade_warmup(plot, warmup_end, top, p);
 }
 
 /// Grey band over the warmup seconds.
