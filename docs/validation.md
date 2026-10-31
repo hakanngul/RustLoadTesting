@@ -36,7 +36,7 @@ background thread, refuses existing files).
   listed both runs and was left at user_version 0. Buttons checked at 230 and
   170 px sidebar width, Dark and Light, Monitor and Report.
 
-Suite: **108 passed** (103 + 5). Format, strict all-target Clippy and build
+Suite: **109 passed** (103 + 6). Format, strict all-target Clippy and build
 pass. Linux only; macOS `open` and Windows `explorer` paths are untested.
 
 ## Screenshot refresh after the header, chart and Report changes

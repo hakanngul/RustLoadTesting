@@ -482,3 +482,43 @@ fn export_writes_a_readable_copy_and_refuses_existing_files() {
     assert!(history.export(&other).is_err());
     assert_eq!(std::fs::read_to_string(&other).unwrap(), "keep me");
 }
+
+#[test]
+fn unusable_derived_tables_never_lose_a_finished_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("history.sqlite3");
+    let s = real_run(&db);
+    // A v1 file whose derived table vanished after the upgrade: the next open
+    // cannot backfill and reports it, but finishing a run must still save it.
+    Connection::open(&db)
+        .unwrap()
+        .execute_batch("DROP TABLE run_endpoints; DELETE FROM run_metrics;")
+        .unwrap();
+    let history = History::open(&db).unwrap();
+    assert!(history.migration_issue().is_some());
+    history.begin("2", &TestPlan::default()).unwrap();
+    let mut finished = s.clone();
+    finished.run_id = "2".into();
+    history.finish(&finished).unwrap();
+    assert_eq!(
+        history.read("2").unwrap().0.counts.completed,
+        s.counts.completed
+    );
+    // Same when the table disappears while a healthy connection is open.
+    let db2 = dir.path().join("second.sqlite3");
+    let s2 = real_run(&db2);
+    let history = History::open(&db2).unwrap();
+    assert!(history.migration_issue().is_none());
+    Connection::open(&db2)
+        .unwrap()
+        .execute_batch("DROP TABLE run_errors")
+        .unwrap();
+    history.begin("3", &TestPlan::default()).unwrap();
+    let mut finished = s2.clone();
+    finished.run_id = "3".into();
+    history.finish(&finished).unwrap();
+    assert_eq!(
+        history.read("3").unwrap().0.counts.completed,
+        s2.counts.completed
+    );
+}

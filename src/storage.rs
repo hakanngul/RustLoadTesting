@@ -200,9 +200,19 @@ impl History {
             ],
         )
         .map_err(|e| e.to_string())?;
-        // A newer schema may have changed the derived tables; leave them alone.
-        if self.version == SCHEMA_VERSION {
-            write_tables(&tx, &s.run_id, s).map_err(|e| e.to_string())?;
+        // A newer schema may have changed the derived tables, and a failed
+        // upgrade may have left them unusable; leave them alone then. The
+        // derived rows go in a savepoint so that failing to write them never
+        // loses the run itself; the next open backfills runs without rows and
+        // reports it if that fails too.
+        if self.version == SCHEMA_VERSION && self.migration_issue.is_none() {
+            tx.execute_batch("SAVEPOINT derived")
+                .map_err(|e| e.to_string())?;
+            let release = match write_tables(&tx, &s.run_id, s) {
+                Ok(()) => "RELEASE derived",
+                Err(_) => "ROLLBACK TO derived; RELEASE derived",
+            };
+            tx.execute_batch(release).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())
     }

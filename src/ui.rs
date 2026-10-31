@@ -1351,7 +1351,14 @@ impl RustLoadApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label("An active test will be stopped and its partial results saved.");
+                    if self.busy() {
+                        ui.label("An active test will be stopped and its partial results saved.");
+                    }
+                    if self.history_exporting {
+                        ui.label(
+                            "A history export is still running; RustLoad closes when it finishes.",
+                        );
+                    }
                     if self.dirty {
                         ui.label(
                             "The plan has unsaved changes. Save it before closing to keep them.",
@@ -1413,14 +1420,15 @@ impl eframe::App for RustLoadApp {
             }
         }
         if ctx.input(|i| i.viewport().close_requested()) && !self.permit_close {
-            if self.dirty || self.busy() {
+            // An unfinished history export would leave a broken copy behind.
+            if self.dirty || self.busy() || self.history_exporting {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.close_dialog = true;
             } else {
                 self.permit_close = true;
             }
         }
-        if self.closing && !self.busy() {
+        if self.closing && !self.busy() && !self.history_exporting {
             self.permit_close = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
