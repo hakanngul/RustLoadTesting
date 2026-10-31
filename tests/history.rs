@@ -415,6 +415,8 @@ fn failed_migration_keeps_history_usable_and_reports_it() {
         .migration_issue()
         .expect("migration failure reported");
     assert!(issue.contains("could not be upgraded"), "{issue}");
+    // SQLite's reason only, not the statement text rusqlite appends.
+    assert!(!issue.contains("CREATE") && issue.len() < 200, "{issue}");
     assert_eq!(history.schema_version(), 0);
     assert_eq!(user_version(&db), 0, "failed upgrade rolled back");
     // Saved runs still list, open and finish.

@@ -126,7 +126,8 @@ impl History {
             Err(e) => (
                 user_version(&connection).unwrap_or(0),
                 Some(format!(
-                    "History database could not be upgraded to schema {SCHEMA_VERSION}: {e}"
+                    "History database could not be upgraded to schema {SCHEMA_VERSION}: {}",
+                    sqlite_reason(&e)
                 )),
             ),
         };
@@ -254,6 +255,16 @@ impl History {
             .into_iter()
             .map(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
             .collect()
+    }
+}
+
+/// SQLite's own message without the statement text, which rusqlite appends
+/// to input errors and which would bury the reason.
+fn sqlite_reason(e: &rusqlite::Error) -> String {
+    match e {
+        rusqlite::Error::SqlInputError { msg, .. } => msg.clone(),
+        rusqlite::Error::SqliteFailure(_, Some(msg)) => msg.clone(),
+        other => other.to_string(),
     }
 }
 
