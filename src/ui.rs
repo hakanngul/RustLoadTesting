@@ -1063,7 +1063,9 @@ impl RustLoadApp {
             });
         });
     }
+    /// The log panel, `height` points tall with its frame.
     fn logs_for(&mut self, ui: &mut egui::Ui, p: Palette, live: bool, height: f32) {
+        let bottom = ui.cursor().top() + height;
         theme::panel(p).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -1098,14 +1100,31 @@ impl RustLoadApp {
                             .contains(&self.log_filter.to_ascii_lowercase())
                 })
                 .collect();
+            // The list fills the rest of the panel in whole rows, so following
+            // the newest entry never leaves a half row under the caption.
+            const ROW: f32 = 18.0;
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let pitch = ROW + ui.spacing().item_spacing.y;
+            let frame = theme::panel(p);
+            let room =
+                bottom - ui.cursor().top() - frame.inner_margin.bottomf() - frame.stroke.width;
+            let list = ((room + ui.spacing().item_spacing.y) / pitch)
+                .floor()
+                .max(2.0)
+                * pitch
+                - ui.spacing().item_spacing.y;
             egui::ScrollArea::vertical()
                 .id_salt("logs")
-                .max_height(height)
+                .max_height(list)
+                // Not cut short by the space left on screen (an outer scroll
+                // area), which would leave a part row again.
+                .min_scrolled_height(list)
                 .stick_to_bottom(self.follow)
-                .show_rows(ui, 18.0, rows.len(), |ui, range| {
+                .show_rows(ui, ROW, rows.len(), |ui, range| {
                     for index in range {
                         let log = rows[index];
                         ui.horizontal(|ui| {
+                            ui.set_height(ROW);
                             ui.label(
                                 RichText::new(format!("{:7.2}s", log.elapsed))
                                     .monospace()
@@ -1542,8 +1561,10 @@ fn metric_value(ui: &mut egui::Ui, value: &str, color: Color32, size: f32) {
     ui.add(egui::Label::new(RichText::new(value).size(size).strong().color(color)).truncate());
 }
 /// Whole-run latency distribution: log-spaced bars with the P50/P95/P99 of the
-/// same histogram marked. The x axis is log10 of milliseconds.
+/// same histogram marked. The x axis is log10 of milliseconds. The panel is
+/// `height` points tall, frame included.
 fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
+    let bottom = ui.cursor().top() + height;
     theme::panel(p).show(ui, |ui| {
         let mut series = vec![("Responses", p.accent)];
         if s.latency.samples > 0 {
@@ -1590,8 +1611,9 @@ fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
             .unwrap_or(0);
         Plot::new("latency_distribution")
             .id(header.id)
-            .height(height)
+            .height(plot_fill_height(ui, p, bottom))
             .include_y(0.0)
+            .y_grid_spacer(egui_plot::uniform_grid_spacer(nice_steps))
             // Headroom for the hover label drawn above the tallest bar.
             .include_y(peak as f64 * 1.3)
             .show_axes([true, true])
@@ -1628,13 +1650,13 @@ fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
                     }
                 }
             });
-        ui.label(
-            RichText::new(format!(
+        plot_caption(
+            ui,
+            p,
+            &format!(
                 "{} fully read responses · log scale · drag to pan, scroll to zoom, double-click to reset",
                 s.latency.samples
-            ))
-            .size(11.0)
-            .color(p.muted),
+            ),
         );
     });
 }
@@ -1692,40 +1714,24 @@ impl PlotHeader {
             .is_some_and(|m| m.auto_bounds != egui::Vec2b::TRUE);
         let mut reset = false;
         ui.horizontal_wrapped(|ui| {
-            // Keep the tile's top-right corner free for its expand button.
-            ui.set_max_width((ui.available_width() - 68.0).max(120.0));
+            // Gaps come from item spacing, not `add_space`: spacing after the
+            // last item of a row does not widen the row past the panel.
+            ui.spacing_mut().item_spacing.x = 12.0;
             ui.strong(title);
-            ui.add_space(8.0);
             for &(name, color) in series {
                 let off = hidden.iter().any(|h| h == name);
-                let (dot, dot_response) =
-                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::click());
-                if off {
-                    ui.painter().circle_stroke(dot.center(), 4.0, (1.5, color));
+                let chip = series_chip(ui, p, name, color, off).on_hover_text(if off {
+                    "Show this series"
                 } else {
-                    ui.painter().circle_filled(dot.center(), 4.5, color);
-                }
-                let label = ui.add(
-                    egui::Label::new(RichText::new(name).size(12.0).color(if off {
-                        p.muted
-                    } else {
-                        p.text
-                    }))
-                    .sense(egui::Sense::click()),
-                );
-                if (dot_response.clicked() || label.clicked()) && !name.is_empty() {
+                    "Hide this series"
+                });
+                if chip.clicked() && !name.is_empty() {
                     if off {
                         hidden.retain(|h| h != name);
                     } else {
                         hidden.push(name.to_owned());
                     }
                 }
-                label.on_hover_text(if off {
-                    "Show this series"
-                } else {
-                    "Hide this series"
-                });
-                ui.add_space(4.0);
             }
             if moved
                 && ui
@@ -1743,6 +1749,75 @@ impl PlotHeader {
         !self.hidden.iter().any(|h| h == name)
     }
 }
+/// One series toggle: colour dot and name as a single unit that never wraps
+/// inside itself. A hidden series shows a hollow dot and muted text.
+fn series_chip(
+    ui: &mut egui::Ui,
+    p: Palette,
+    name: &str,
+    color: Color32,
+    off: bool,
+) -> egui::Response {
+    const DOT: f32 = 10.0;
+    const GAP: f32 = 4.0;
+    let text = if off { p.muted } else { p.text };
+    let galley =
+        ui.painter()
+            .layout_no_wrap(name.to_owned(), egui::FontId::proportional(12.0), text);
+    let size = egui::vec2(DOT + GAP + galley.size().x, galley.size().y.max(DOT));
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if response.hovered() {
+            painter.rect_filled(rect.expand(2.0), 4.0, p.elevated);
+        }
+        let dot = egui::pos2(rect.left() + DOT / 2.0, rect.center().y);
+        if off {
+            painter.circle_stroke(dot, 4.0, (1.5, color));
+        } else {
+            painter.circle_filled(dot, 4.5, color);
+        }
+        let pos = egui::pos2(
+            rect.left() + DOT + GAP,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        painter.galley(pos, galley, text);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+/// Step between labelled y grid lines: 1, 2 or 5 times a power of ten, for
+/// about five lines over `range`.
+fn nice_step(range: f64) -> f64 {
+    let rough = range.abs().max(f64::EPSILON) / 5.0;
+    let magnitude = 10_f64.powf(rough.log10().floor());
+    [1.0, 2.0, 5.0, 10.0]
+        .into_iter()
+        .map(|m| m * magnitude)
+        .find(|s| *s >= rough)
+        .unwrap_or(10.0 * magnitude)
+}
+/// y grid with 1-2-5 steps. egui_plot's default uses powers of ten only,
+/// which leaves a 0–8 ms or 0–900 ms axis with a single label.
+fn nice_steps(input: egui_plot::GridInput) -> [f64; 3] {
+    let step = nice_step(input.bounds.1 - input.bounds.0);
+    [step / 5.0, step, step * 5.0]
+}
+/// Plot height that fills a chart panel whose outer frame ends at `bottom`,
+/// leaving room for one 11 px caption line under the plot. The header above
+/// may wrap onto several rows; the plot gives up that height, not the panel.
+fn plot_fill_height(ui: &egui::Ui, p: Palette, bottom: f32) -> f32 {
+    let frame = theme::panel(p);
+    let caption = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(11.0)));
+    let below =
+        ui.spacing().item_spacing.y + caption + frame.inner_margin.bottomf() + frame.stroke.width;
+    (bottom - ui.cursor().top() - below).max(40.0)
+}
+/// The one-line caption under a chart; a narrow panel cuts it (hover shows
+/// all of it) so it keeps the height `plot_fill_height` left for it.
+fn plot_caption(ui: &mut egui::Ui, p: Palette, text: &str) {
+    ui.add(egui::Label::new(RichText::new(text).size(11.0).color(p.muted)).truncate());
+}
+/// A live chart panel `height` points tall, frame included.
 fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) {
     let (id, title) = match kind {
         Chart::Rps => ("rps", "Requests per Second"),
@@ -1750,6 +1825,7 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
         Chart::Latency => ("latency", "Response Time (ms) · interval percentiles"),
         Chart::Users => ("users", "Active Virtual Users"),
     };
+    let bottom = ui.cursor().top() + height;
     theme::panel(p).show(ui, |ui| {
         let warmup = s.warmup != Warmup::None;
         let mut series = match kind {
@@ -1777,9 +1853,10 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
         }
         Plot::new(id)
             .id(header.id)
-            .height(height)
+            .height(plot_fill_height(ui, p, bottom))
             .include_y(0.0)
             .grid_spacing(egui::emath::Rangef::new(25.0, 100.0))
+            .y_grid_spacer(egui_plot::uniform_grid_spacer(nice_steps))
             .show_axes([true, true])
             .allow_drag(true)
             .allow_zoom(true)
@@ -1886,10 +1963,10 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                     );
                 }
             });
-        ui.label(
-            RichText::new("Elapsed seconds · drag to pan, scroll to zoom, double-click to reset")
-                .size(11.0)
-                .color(p.muted),
+        plot_caption(
+            ui,
+            p,
+            "Elapsed seconds · drag to pan, scroll to zoom, double-click to reset",
         );
     });
 }
@@ -2089,7 +2166,7 @@ fn threshold_editor(
     }
     ui.colored_label(
         p.muted,
-        "Thresholds give each run a Passed/Failed verdict and never stop it. Latency and error rate are upper bounds; throughput is a lower bound measured as completed requests over the whole run.",
+        "Thresholds give each run a Passed/Failed verdict and never stop it. Latency and error rate are upper bounds; throughput is a lower bound: completed requests divided by the measured time (after warmup), not the 5-second card.",
     );
 }
 fn tone_color(tone: Tone, p: Palette) -> Color32 {
@@ -2773,5 +2850,30 @@ fn request_options(ui: &mut egui::Ui, r: &mut Request, tab: usize, p: Palette) {
             ui.label("Redirects, automatic retries and cookie management are disabled.");
             ui.label("On a failed step, the remaining scenario steps are skipped and the next iteration begins after think time.");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn y_grid_steps_are_one_two_or_five() {
+        // About five labelled lines, so a few-millisecond axis is not just "0".
+        for (range, step) in [
+            (8.0, 2.0),
+            (900.0, 200.0),
+            (25.0, 5.0),
+            (10.0, 2.0),
+            (1.0, 0.2),
+            (4.0, 1.0),
+            (120_000.0, 50_000.0),
+        ] {
+            let got = nice_step(range);
+            assert!((got - step).abs() < step * 1e-9, "{range}: {got} != {step}");
+        }
+        // Reversed bounds and an empty range still give a positive step.
+        assert!((nice_step(-25.0) - 5.0).abs() < 1e-9);
+        assert!(nice_step(0.0) > 0.0);
     }
 }

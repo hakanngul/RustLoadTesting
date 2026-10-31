@@ -1,5 +1,49 @@
 # Validation evidence
 
+## UI polish: chart chips, tile heights, Expand, y axes, logs, import, SLO text
+
+Seven issues seen in native screenshots, fixed together.
+
+- **Series chips** (`series_chip` in `src/ui.rs`): dot and name are one
+  click target laid out without wrapping, so a dot can no longer end a line
+  with its name on the next, and "Warmup end" stays on one line. Click to
+  toggle, hover text, pointer cursor and the hidden look (hollow dot, muted
+  text) are kept. Header gaps use item spacing instead of `add_space`, which
+  had widened the row past the panel and showed a horizontal scrollbar.
+- **Tile height**: `chart()`, `latency_histogram()` and `logs_for()` now take
+  the panel's total height and size the plot or list from what is left under
+  the header (`plot_fill_height`). A wrapped chip row takes height from the
+  plot, not from the tile, so the caption and frame stay inside. The caption
+  is one truncated line (hover shows it all).
+- **Expand** sits on the right of the tile's top edge, across the frame
+  margin, so it covers no widget control (Follow, Reset zoom, chips, card
+  values). The chart header no longer reserves 68 px for it.
+- **y axes**: the 1-2-5 grid from the Report (`nice_step`/`nice_steps`, now in
+  `src/ui.rs`) is used by the live charts and the latency distribution too;
+  a 0–8 ms axis reads 0, 2, 4, 6 instead of only 0.
+- **Logs**: the list fills the rest of the panel in whole rows (18 px rows,
+  fixed pitch) and is not cut short by an outer scroll area, so following the
+  newest entry no longer leaves a half row under the "Bounded 5,000 events"
+  line. The Report drawer shows its rows instead of three.
+- **Import**: `import::read_import_file` gives "Choose a file path first" for
+  an empty path and "Cannot read <path>: …" otherwise (HAR and OpenAPI).
+- **SLO help text** now says throughput is measured over the time after
+  warmup, as `evaluate_thresholds` does; user guides (SLO, comparison, glossary)
+  follow.
+
+Tests: `y_grid_steps_are_one_two_or_five` (unit, `src/ui.rs`; 0–8 → 2, 0–900 →
+200, 0–25 → 5, reversed/empty ranges) and `import_file_messages_name_the_path`
+(`tests/import.rs`). Native Linux/Xvfb, debug build, isolated home, Local Demo
+traffic only: Studio, Studio 2, Monitor and Report; Dark at 1520×1040 and
+900×720, Dark and Light at 1180×1040, Light at 900×720 (Studio, Studio 2);
+runs with and without a 3 s warmup; chips wrapping
+as units with the tile keeping its height, hidden-series chip, Expand over Logs,
+KPI cards, charts, Status, Endpoints and Live Metrics, expanded chart and logs,
+a history run in Monitor and Report, the Report log drawer, and the OpenAPI
+Preview with an empty and a missing path.
+
+Suite: **105 passed**. Format, strict all-target Clippy and build pass. Linux only.
+
 ## Screenshot refresh after the header, chart and Report changes
 
 Every documentation screenshot was recaptured from the current build so it shows

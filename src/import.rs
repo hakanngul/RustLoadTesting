@@ -8,6 +8,24 @@ use serde::Deserialize;
 pub const IMPORT_LIMIT: usize = 500;
 pub const HAR_SIZE_LIMIT: u64 = 50 * 1024 * 1024;
 
+/// Reads a HAR or OpenAPI file chosen in the import dialog, with messages
+/// that name the path (an empty path asks for one first).
+pub fn read_import_file(path: &str) -> Result<Vec<u8>, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Choose a file path first".into());
+    }
+    let cannot = |e: std::io::Error| format!("Cannot read {path}: {e}");
+    let meta = std::fs::metadata(path).map_err(cannot)?;
+    if meta.is_dir() {
+        return Err(format!("{path} is a folder; choose a file"));
+    }
+    if meta.len() > HAR_SIZE_LIMIT {
+        return Err(format!("{path} exceeds 50 MiB"));
+    }
+    std::fs::read(path).map_err(cannot)
+}
+
 /// Headers that describe the connection or are set by the HTTP client.
 /// `accept-encoding` is dropped because responses are not decompressed.
 const DROPPED_HEADERS: [&str; 10] = [
