@@ -15,7 +15,7 @@ use crate::{
     theme::{self, Palette},
 };
 use eframe::egui::{self, Color32, RichText};
-use egui_plot::{Bar, BarChart, Legend, Line, Plot, PlotPoints, Points, VLine};
+use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints, Points, VLine};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -116,6 +116,8 @@ pub struct RustLoadApp {
     message: String,
     /// Tone of `message` while it is still the message shown.
     message_tone: Option<(Tone, String)>,
+    /// Widget shown enlarged in a window (workspace and kind); not saved.
+    expanded: Option<(Workspace, WidgetKind)>,
     /// Last "Validate plan" result and the plan it was computed for.
     validation: Option<(String, Result<(), String>)>,
     file_action: Option<FileAction>,
@@ -176,6 +178,7 @@ impl RustLoadApp {
             message: "Create a plan or try Local Demo. All metrics come from real HTTP requests."
                 .into(),
             message_tone: None,
+            expanded: None,
             validation: None,
             file_action: None,
             dialog_path: String::new(),
@@ -1038,7 +1041,7 @@ impl RustLoadApp {
             });
         });
     }
-    fn logs_for(&mut self, ui: &mut egui::Ui, p: Palette, live: bool) {
+    fn logs_for(&mut self, ui: &mut egui::Ui, p: Palette, live: bool, height: f32) {
         theme::panel(p).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -1075,7 +1078,7 @@ impl RustLoadApp {
                 .collect();
             egui::ScrollArea::vertical()
                 .id_salt("logs")
-                .max_height(200.0)
+                .max_height(height)
                 .stick_to_bottom(self.follow)
                 .show_rows(ui, 18.0, rows.len(), |ui, range| {
                     for index in range {
@@ -1313,6 +1316,7 @@ impl eframe::App for RustLoadApp {
         self.dialogs(ctx);
         self.import_dialog(ctx, p);
         self.dashboard_manager(ctx, p);
+        self.expanded_widget(ctx, p);
         if self.layout_save_requested {
             if let Some(storage) = frame.storage_mut() {
                 eframe::set_value(storage, "rustload-preferences", &self.prefs);
@@ -1497,14 +1501,35 @@ fn metric(ui: &mut egui::Ui, p: Palette, label: &str, value: &str, color: Color3
         ui.set_min_width((ui.available_width() - 4.0).max(40.0));
         ui.label(RichText::new(label).size(12.0).color(p.muted));
         ui.add_space(6.0);
-        ui.label(RichText::new(value).size(27.0).strong().color(color));
+        metric_value(ui, value, color, 27.0);
     });
+}
+/// A card's big number, shrunk to fit instead of wrapping one character per
+/// line (e.g. "20.3 KiB/s" in a narrow card); cut only below 16 px.
+fn metric_value(ui: &mut egui::Ui, value: &str, color: Color32, size: f32) {
+    let full = ui
+        .painter()
+        .layout_no_wrap(value.to_owned(), egui::FontId::proportional(size), color)
+        .size()
+        .x;
+    let size = (size * ui.available_width() / full.max(1.0)).clamp(16.0, size);
+    ui.add(egui::Label::new(RichText::new(value).size(size).strong().color(color)).truncate());
 }
 /// Whole-run latency distribution: log-spaced bars with the P50/P95/P99 of the
 /// same histogram marked. The x axis is log10 of milliseconds.
 fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
     theme::panel(p).show(ui, |ui| {
-        ui.strong("Latency Distribution (ms) · whole run");
+        let mut series = vec![("Responses", p.accent)];
+        if s.latency.samples > 0 {
+            series.extend([("P50", p.p50), ("P95", p.p95), ("P99", p.p99)]);
+        }
+        let header = PlotHeader::show(
+            ui,
+            p,
+            "Latency Distribution (ms) · whole run",
+            "latency_distribution",
+            &series,
+        );
         if s.latency_distribution.is_empty() {
             // Runs saved before the distribution existed have none to show.
             ui.label(
@@ -1538,29 +1563,37 @@ fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
             .max()
             .unwrap_or(0);
         Plot::new("latency_distribution")
+            .id(header.id)
             .height(height)
             .include_y(0.0)
             // Headroom for the hover label drawn above the tallest bar.
             .include_y(peak as f64 * 1.3)
             .show_axes([true, true])
-            .legend(Legend::default())
             .allow_drag(true)
             .allow_zoom(true)
             .x_axis_formatter(|mark, _| short_ms(10_f64.powf(mark.value)))
             .show(ui, |plot| {
-                plot.bar_chart(
-                    BarChart::new("Responses", bars)
-                        .color(p.accent)
-                        .element_formatter(Box::new(|bar, _| {
-                            format!("{}\n{} responses", bar.name, bar.value)
-                        })),
-                );
+                if header.reset {
+                    plot.set_auto_bounds(true);
+                }
+                if header.visible("Responses") {
+                    plot.bar_chart(
+                        BarChart::new("Responses", bars)
+                            .color(p.accent)
+                            .element_formatter(Box::new(|bar, _| {
+                                format!("{}\n{} responses", bar.name, bar.value)
+                            })),
+                    );
+                }
                 if s.latency.samples > 0 {
                     for (name, color, value) in [
                         ("P50", p.p50, s.latency.p50),
                         ("P95", p.p95, s.latency.p95),
                         ("P99", p.p99, s.latency.p99),
                     ] {
+                        if !header.visible(name) {
+                            continue;
+                        }
                         plot.vline(
                             VLine::new(name, value.max(0.001).log10())
                                 .color(color)
@@ -1571,7 +1604,7 @@ fn latency_histogram(ui: &mut egui::Ui, s: &Snapshot, p: Palette, height: f32) {
             });
         ui.label(
             RichText::new(format!(
-                "{} fully read responses · log scale · drag to pan, scroll to zoom",
+                "{} fully read responses · log scale · drag to pan, scroll to zoom, double-click to reset",
                 s.latency.samples
             ))
             .size(11.0)
@@ -1608,6 +1641,82 @@ enum Chart {
     Latency,
     Users,
 }
+/// Header of a pan/zoom chart: the title, one toggle per series (in place of
+/// egui_plot's in-plot legend, which covered the newest data) and a
+/// "Reset zoom" button once the chart was moved or zoomed.
+struct PlotHeader {
+    /// Pass to `Plot::id` so the header and the plot share state.
+    id: egui::Id,
+    /// Restore automatic bounds this frame.
+    reset: bool,
+    hidden: Vec<String>,
+}
+impl PlotHeader {
+    fn show(
+        ui: &mut egui::Ui,
+        p: Palette,
+        title: &str,
+        id: impl std::hash::Hash,
+        series: &[(&str, Color32)],
+    ) -> Self {
+        let id = ui.make_persistent_id(id);
+        let hidden_id = id.with("hidden");
+        let mut hidden: Vec<String> = ui.data(|d| d.get_temp(hidden_id)).unwrap_or_default();
+        let moved = egui_plot::PlotMemory::load(ui.ctx(), id)
+            .is_some_and(|m| m.auto_bounds != egui::Vec2b::TRUE);
+        let mut reset = false;
+        ui.horizontal_wrapped(|ui| {
+            // Keep the tile's top-right corner free for its expand button.
+            ui.set_max_width((ui.available_width() - 68.0).max(120.0));
+            ui.strong(title);
+            ui.add_space(8.0);
+            for &(name, color) in series {
+                let off = hidden.iter().any(|h| h == name);
+                let (dot, dot_response) =
+                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::click());
+                if off {
+                    ui.painter().circle_stroke(dot.center(), 4.0, (1.5, color));
+                } else {
+                    ui.painter().circle_filled(dot.center(), 4.5, color);
+                }
+                let label = ui.add(
+                    egui::Label::new(RichText::new(name).size(12.0).color(if off {
+                        p.muted
+                    } else {
+                        p.text
+                    }))
+                    .sense(egui::Sense::click()),
+                );
+                if (dot_response.clicked() || label.clicked()) && !name.is_empty() {
+                    if off {
+                        hidden.retain(|h| h != name);
+                    } else {
+                        hidden.push(name.to_owned());
+                    }
+                }
+                label.on_hover_text(if off {
+                    "Show this series"
+                } else {
+                    "Hide this series"
+                });
+                ui.add_space(4.0);
+            }
+            if moved
+                && ui
+                    .small_button("Reset zoom")
+                    .on_hover_text("Show the whole run again (or double-click the chart)")
+                    .clicked()
+            {
+                reset = true;
+            }
+        });
+        ui.data_mut(|d| d.insert_temp(hidden_id, hidden.clone()));
+        Self { id, reset, hidden }
+    }
+    fn visible(&self, name: &str) -> bool {
+        !self.hidden.iter().any(|h| h == name)
+    }
+}
 fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) {
     let (id, title) = match kind {
         Chart::Rps => ("rps", "Requests per Second"),
@@ -1616,19 +1725,42 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
         Chart::Users => ("users", "Active Virtual Users"),
     };
     theme::panel(p).show(ui, |ui| {
-        ui.strong(title);
+        let warmup = s.warmup != Warmup::None;
+        let mut series = match kind {
+            Chart::Rps => vec![
+                ("Total", p.accent),
+                ("Success", p.success),
+                ("Failed", p.error),
+            ],
+            Chart::Throughput => vec![("Requests/sec", p.accent)],
+            Chart::Latency => vec![("P50", p.p50), ("P95", p.p95), ("P99", p.p99)],
+            Chart::Users => vec![("Active users", p.success)],
+        };
+        if warmup && matches!(kind, Chart::Rps | Chart::Throughput) {
+            series.push(("Warmup", p.muted));
+        }
+        if !s.target_rate.is_empty() && matches!(kind, Chart::Rps | Chart::Throughput) {
+            series.push(("Target it/s", p.accent));
+        }
+        if warmup && s.measured_from > 0.0 && !s.warming_up {
+            series.push(("Warmup end", p.muted));
+        }
+        let header = PlotHeader::show(ui, p, title, id, &series);
         if s.series.is_empty() {
             ui.label(RichText::new("Waiting for measurements…").color(p.muted));
         }
         Plot::new(id)
+            .id(header.id)
             .height(height)
             .include_y(0.0)
             .grid_spacing(egui::emath::Rangef::new(25.0, 100.0))
             .show_axes([true, true])
-            .legend(Legend::default())
             .allow_drag(true)
             .allow_zoom(true)
             .show(ui, |plot| {
+                if header.reset {
+                    plot.set_auto_bounds(true);
+                }
                 let line = |name: &str, color: Color32, values: Vec<[f64; 2]>| {
                     Line::new(name, PlotPoints::from(values))
                         .color(color)
@@ -1640,6 +1772,7 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                         .map(|v| [v.elapsed, f(v)])
                         .collect::<Vec<_>>()
                 };
+                let mut lines: Vec<Line<'_>> = vec![];
                 match kind {
                     Chart::Rps | Chart::Throughput => {
                         let rates = |f: fn(&Point) -> u64| {
@@ -1651,28 +1784,34 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                                         f(point) as f64 / point.interval_secs.max(0.001),
                                     ]
                                 })
-                                .collect()
+                                .collect::<Vec<_>>()
                         };
-                        plot.line(line(
-                            if matches!(kind, Chart::Rps) {
-                                "Total"
-                            } else {
-                                "Requests/sec"
-                            },
-                            p.accent,
-                            rates(|v| v.completed),
-                        ));
+                        let total = if matches!(kind, Chart::Rps) {
+                            "Total"
+                        } else {
+                            "Requests/sec"
+                        };
+                        lines.push(line(total, p.accent, rates(|v| v.completed)));
                         if matches!(kind, Chart::Rps) {
-                            plot.line(line("Success", p.success, rates(|v| v.successful)));
-                            plot.line(line("Failed", p.error, rates(|v| v.failed)));
+                            lines.push(line("Success", p.success, rates(|v| v.successful)));
+                            lines.push(line("Failed", p.error, rates(|v| v.failed)));
                         }
-                        if s.warmup != Warmup::None {
-                            plot.line(line("Warmup", p.muted, rates(|v| v.warmup_completed)));
+                        if warmup {
+                            // Stop the warmup line after its last completions
+                            // instead of drawing zeros over the rest of the run.
+                            let mut points = rates(|v| v.warmup_completed);
+                            let end = s
+                                .series
+                                .iter()
+                                .rposition(|v| v.warmup_completed > 0)
+                                .map_or(0, |i| (i + 2).min(points.len()));
+                            points.truncate(end);
+                            lines.push(line("Warmup", p.muted, points));
                         }
                         if !s.target_rate.is_empty() {
                             // Planned iteration starts per second (open model), up
                             // to now; one iteration may send several requests.
-                            plot.line(
+                            lines.push(
                                 line(
                                     "Target it/s",
                                     p.accent,
@@ -1692,7 +1831,7 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                             ("P95", p.p95, |v: &Point| v.latency.p95),
                             ("P99", p.p99, |v: &Point| v.latency.p99),
                         ] {
-                            plot.line(line(
+                            lines.push(line(
                                 name,
                                 color,
                                 s.series
@@ -1704,10 +1843,16 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                         }
                     }
                     Chart::Users => {
-                        plot.line(line("Active users", p.success, values(|v| v.users as f64)))
+                        lines.push(line("Active users", p.success, values(|v| v.users as f64)))
                     }
                 }
-                if s.warmup != Warmup::None && !s.warming_up && s.measured_from > 0.0 {
+                for l in lines {
+                    if header.visible(egui_plot::PlotItem::name(&l)) {
+                        plot.line(l);
+                    }
+                }
+                if warmup && !s.warming_up && s.measured_from > 0.0 && header.visible("Warmup end")
+                {
                     plot.vline(
                         VLine::new("Warmup end", s.measured_from)
                             .color(p.muted)
@@ -1716,7 +1861,7 @@ fn chart(ui: &mut egui::Ui, s: &Snapshot, p: Palette, kind: Chart, height: f32) 
                 }
             });
         ui.label(
-            RichText::new("Elapsed seconds · drag to pan, scroll to zoom")
+            RichText::new("Elapsed seconds · drag to pan, scroll to zoom, double-click to reset")
                 .size(11.0)
                 .color(p.muted),
         );

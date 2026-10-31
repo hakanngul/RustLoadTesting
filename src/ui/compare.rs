@@ -85,18 +85,30 @@ fn overlay_chart(
     value: fn(&Point) -> Option<f64>,
 ) {
     theme::panel(p).show(ui, |ui| {
-        ui.strong(title);
+        let header = PlotHeader::show(
+            ui,
+            p,
+            title,
+            id,
+            &[("Baseline", p.muted), ("Candidate", color)],
+        );
         Plot::new(id)
+            .id(header.id)
             .height(150.0)
             .include_y(0.0)
-            .legend(Legend::default())
             .allow_drag(true)
             .allow_zoom(true)
             .show(ui, |plot| {
+                if header.reset {
+                    plot.set_auto_bounds(true);
+                }
                 for (name, run, line_color, dashed) in [
                     ("Baseline", &view.base, p.muted, true),
                     ("Candidate", &view.candidate, color, false),
                 ] {
+                    if !header.visible(name) {
+                        continue;
+                    }
                     let points: Vec<[f64; 2]> = run
                         .points
                         .iter()

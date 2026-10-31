@@ -418,32 +418,10 @@ impl RustLoadApp {
                     .auto_shrink([false, widget.dock == Dock::Main && !page.dashboard_only])
                     .show(ui, |ui| {
                         let plot_height = (height - edit_height - 110.0).max(40.0);
-                        // Monitor shows the run it has open (live or history);
-                        // Studio and Studio 2 always show the current run.
-                        let s = self.widget_source(ws);
-                        match widget.kind {
-                            WidgetKind::Throughput => {
-                                chart(ui, s, p, Chart::Throughput, plot_height)
-                            }
-                            WidgetKind::RequestsPerSecond => {
-                                chart(ui, s, p, Chart::Rps, plot_height)
-                            }
-                            WidgetKind::Latency => chart(ui, s, p, Chart::Latency, plot_height),
-                            WidgetKind::ActiveUsers => chart(ui, s, p, Chart::Users, plot_height),
-                            WidgetKind::Logs => self.logs_for(ui, p, ws != Workspace::Monitor),
-                            WidgetKind::StatusCodes => status_panel(ui, s, p),
-                            WidgetKind::Endpoints => endpoint_panel(ui, s, p),
-                            WidgetKind::LiveMetrics => self.studio2_metrics(ui, p, ws),
-                            WidgetKind::KpiCards => kpi_cards(ui, s, p),
-                            WidgetKind::LatencyHistogram => {
-                                latency_histogram(ui, s, p, plot_height)
-                            }
-                            WidgetKind::Unknown => {
-                                ui.label("Unavailable widget");
-                            }
-                        }
+                        self.widget_body(ui, p, ws, widget.kind, plot_height, 200.0);
                     });
             };
+            let tile = ui.max_rect();
             if editing {
                 let (_, dropped) = ui.dnd_drop_zone::<DragWidget, _>(
                     egui::Frame::new().inner_margin(3).corner_radius(8),
@@ -458,8 +436,111 @@ impl RustLoadApp {
                 }
             } else {
                 body(ui);
+                // Shown while the pointer is over the tile, in its own layer so
+                // the widget's scroll area or plot cannot take the click. Modal
+                // windows and menus sit above that layer.
+                let area = egui::Id::new(("expand_widget", ws, page.id, widget.id));
+                let over_tile = ui.ctx().pointer_hover_pos().is_some_and(|pos| {
+                    tile.contains(pos)
+                        && ui.clip_rect().contains(pos)
+                        // Not while a window, menu or the button covers it.
+                        && ui.ctx().layer_id_at(pos).is_some_and(|layer| {
+                            layer == ui.layer_id() || layer.id == area
+                        })
+                });
+                if over_tile {
+                    let shown = egui::Area::new(area)
+                        .order(egui::Order::Middle)
+                        .fixed_pos(tile.right_top() + egui::vec2(-66.0, 8.0))
+                        .show(ui.ctx(), |ui| {
+                            let expand = egui::Button::new(RichText::new("Expand").size(11.0))
+                                .wrap_mode(egui::TextWrapMode::Extend);
+                            ui.add(expand)
+                                .on_hover_text("Show this widget large; Esc or Close returns")
+                                .clicked()
+                        });
+                    if shown.inner {
+                        self.expanded = Some((ws, widget.kind));
+                    }
+                }
             }
         });
+    }
+
+    /// Content of one widget. Monitor shows the run it has open (live or
+    /// history); Studio and Studio 2 always show the current run.
+    fn widget_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: Palette,
+        ws: Workspace,
+        kind: WidgetKind,
+        plot_height: f32,
+        log_height: f32,
+    ) {
+        let s = self.widget_source(ws);
+        match kind {
+            WidgetKind::Throughput => chart(ui, s, p, Chart::Throughput, plot_height),
+            WidgetKind::RequestsPerSecond => chart(ui, s, p, Chart::Rps, plot_height),
+            WidgetKind::Latency => chart(ui, s, p, Chart::Latency, plot_height),
+            WidgetKind::ActiveUsers => chart(ui, s, p, Chart::Users, plot_height),
+            WidgetKind::Logs => self.logs_for(ui, p, ws != Workspace::Monitor, log_height),
+            WidgetKind::StatusCodes => status_panel(ui, s, p),
+            WidgetKind::Endpoints => endpoint_panel(ui, s, p),
+            WidgetKind::LiveMetrics => self.studio2_metrics(ui, p, ws),
+            WidgetKind::KpiCards => kpi_cards(ui, s, p),
+            WidgetKind::LatencyHistogram => latency_histogram(ui, s, p, plot_height),
+            WidgetKind::Unknown => {
+                ui.label("Unavailable widget");
+            }
+        }
+    }
+
+    /// The expanded widget in a large centred window; Esc, a click outside
+    /// or Close returns to the layout. The layout itself is not changed.
+    pub(super) fn expanded_widget(&mut self, ctx: &egui::Context, p: Palette) {
+        let Some((ws, kind)) = self.expanded else {
+            return;
+        };
+        let screen = ctx.content_rect();
+        let size = egui::vec2(screen.width() * 0.9, screen.height() * 0.85);
+        let mut close = false;
+        // Charts and logs fill the window; cards and tables keep their height.
+        let fill = matches!(
+            kind,
+            WidgetKind::Throughput
+                | WidgetKind::RequestsPerSecond
+                | WidgetKind::Latency
+                | WidgetKind::ActiveUsers
+                | WidgetKind::LatencyHistogram
+                | WidgetKind::Logs
+        );
+        let response = egui::Modal::new(egui::Id::new("expanded_widget")).show(ctx, |ui| {
+            ui.set_width(size.x);
+            if fill {
+                ui.set_height(size.y);
+            }
+            ui.horizontal(|ui| {
+                ui.strong(kind.label());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close = ui.button("Close").on_hover_text("Close (Esc)").clicked();
+                });
+            });
+            ui.separator();
+            egui::ScrollArea::both()
+                .id_salt("expanded_widget_scroll")
+                .max_height(size.y)
+                .auto_shrink([false, !fill])
+                .show(ui, |ui| {
+                    ui.push_id(("expanded", ws), |ui| {
+                        let height = (size.y - 150.0).max(120.0);
+                        self.widget_body(ui, p, ws, kind, height, height - 40.0);
+                    });
+                });
+        });
+        if close || response.should_close() {
+            self.expanded = None;
+        }
     }
 
     pub(super) fn widget_source(&self, ws: Workspace) -> &Snapshot {

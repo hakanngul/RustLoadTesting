@@ -468,7 +468,7 @@ fn studio2_card(
         ui.set_min_width((ui.available_width() - 2.0).max(40.0));
         ui.set_min_height(110.0);
         ui.label(RichText::new(label).size(12.0).color(p.muted));
-        ui.label(RichText::new(value).size(26.0).strong().color(color));
+        metric_value(ui, value, color, 26.0);
         detail(ui);
     });
 }

@@ -439,6 +439,11 @@ Everything below is a widget page you can rearrange (see
 
 **Charts** (x axis: elapsed seconds; drag to pan, scroll to zoom)
 
+Each chart lists its series next to the title; click a name or its dot to hide
+or show that series. After you pan or zoom, **Reset zoom** appears in the
+title row and returns to the whole run (double-clicking the chart does the
+same).
+
 - **Requests per Second**: **Total**, **Success** and **Failed** completions
   per interval, plus **Warmup** and **Target it/s** when relevant.
 - **Response Time (ms) · interval percentiles**: P50, P95 and P99 computed
@@ -684,6 +689,11 @@ saving a plan does not include them.
    the app.
 
 Drag the edge of the bottom or right panel to resize it.
+
+**Expand** appears in a widget's top-right corner while the pointer is over it
+(outside **Edit layout**). It opens the widget large in the middle of the
+window, still live; **Close**, Esc or a click outside returns. The layout is
+not changed.
 
 ### Add widgets and manage pages
 
