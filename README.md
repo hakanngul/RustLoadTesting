@@ -164,10 +164,13 @@ line drawn), failure reasons, HTTP status, the slowest request, a sortable
 endpoint table and a folded log drawer. It never changes Monitor's layout. See
 the [user guide](docs/user-guide.md#report).
 
+![Report for a completed local run: PASSED verdict band with four SLO chips, key cards, the shared-axis timeline with the warmup band, failures, HTTP status and the slowest request](docs/screenshots/report-dark.png)
+
 Dark and Light themes are available throughout the app. You can also view
 [Studio in Light](docs/screenshots/studio-light.png),
-[Studio 2 in Light](docs/screenshots/studio2-light.png), and
-[Monitor in Light](docs/screenshots/monitor-light.png).
+[Studio 2 in Light](docs/screenshots/studio2-light.png),
+[Monitor in Light](docs/screenshots/monitor-light.png), and
+[Report in Light](docs/screenshots/report-light.png).
 
 ## Custom dashboards
 

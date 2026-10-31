@@ -517,6 +517,8 @@ yer alır. Ağaçtaki **Summary Report** mevcut çalıştırmayı Monitor'de aç
 için soldaki **Test Runs** listesinden seçin. Düzeni sabittir ve Monitor
 sayfalarını değiştirmez. Studio'dan başlatılan test yine Monitor'ü açar.
 
+![Dört SLO eşiği ve 5 sn warmup ile demo çalıştırmasından sonra Report: PASSED sonuç bandı, SLO kutucukları, ana kartlar, warmup bandı gölgeli zaman çizelgesi, hatalar, HTTP durumu ve en yavaş istek](screenshots/guide/07-report.png)
+
 - **Sonuç bandı**: SLO eşiklerine göre **PASSED** / **FAILED** /
   **INCONCLUSIVE**; eşik yoksa **COMPLETED**, **COMPLETED WITH ERRORS**,
   **CANCELLED** ya da **RUNNING**. Kullanıcı, profil, süre, istek ve hata

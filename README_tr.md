@@ -177,10 +177,13 @@ istek, sıralanabilir endpoint tablosu ve katlanmış log çekmecesi. Monitor
 düzenini değiştirmez. Ayrıntılar
 [kullanım rehberinde](docs/user-guide_tr.md#report).
 
+![Tamamlanmış yerel bir çalıştırmanın Report görünümü: dört SLO kutucuklu PASSED sonuç bandı, ana kartlar, warmup bandı gölgeli ortak eksenli zaman çizelgesi, hatalar, HTTP durumu ve en yavaş istek](docs/screenshots/report-dark.png)
+
 Uygulamanın tamamında koyu ve açık tema kullanılabilir. Açık temadaki
 [Studio](docs/screenshots/studio-light.png),
-[Studio 2](docs/screenshots/studio2-light.png) ve
-[Monitor](docs/screenshots/monitor-light.png) görüntülerini de inceleyebilirsiniz.
+[Studio 2](docs/screenshots/studio2-light.png),
+[Monitor](docs/screenshots/monitor-light.png) ve
+[Report](docs/screenshots/report-light.png) görüntülerini de inceleyebilirsiniz.
 
 ## Kişisel dashboardlar
 

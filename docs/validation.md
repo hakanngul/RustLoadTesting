@@ -1,5 +1,31 @@
 # Validation evidence
 
+## Screenshot refresh after the header, chart and Report changes
+
+Every documentation screenshot was recaptured from the current build so it shows
+the status line in the header, the **k6 Demo** button, series chips next to
+chart titles and the **Report** tab. Each image keeps its file name, pixel size
+and subject; the captions still match and were not changed.
+
+- Recaptured: `docs/screenshots/` studio-dark/light, studio2-dark/light
+  (1520×1040), studio2-compact (900×720), monitor-dark/light,
+  widgets-dashboard/edit/focus/layouts (1520×1040); `docs/screenshots/guide/`
+  01–03 (1440×900), 04-arrival-rate-stages (285×712 crop),
+  05-import-openapi (696×702 crop), 06-layout-manager (666×598 crop).
+- New: `report-dark.png` and `report-light.png` (1520×1040) in the README
+  Report sections (Light as a link, like the other workspaces) and
+  `guide/07-report.png` (1440×900) in the user guides' Report sections.
+- Data: native Linux/Xvfb debug build, a fresh isolated home per scenario and
+  only **Local Demo** traffic to its 127.0.0.1 server. The guide 02/03/07 and
+  Report shots come from one 30 s run with a 5 s warmup and four SLOs (P95 ≤ 50
+  ms, error rate ≤ 1 %, throughput ≥ 10 req/s, P99 ≤ 100 ms), all passing. The
+  k6 Demo button is only visible; its plan was never run. The OpenAPI import
+  used a local file whose server is `http://127.0.0.1:8080`. No secrets appear.
+- Checks: old and new sizes compared before overwriting (all equal); PNGs
+  re-saved losslessly; every `screenshots/…png` link in README*.md and docs/*.md
+  resolves (link checker: 0 problems); `git diff --check` clean. No code
+  changes.
+
 ## Report view
 
 A **Report** tab next to Monitor shows the run Monitor has open as a fixed,

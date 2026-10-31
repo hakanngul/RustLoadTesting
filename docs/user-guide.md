@@ -500,6 +500,8 @@ the problem?" next, for the run Monitor has open; pick another run in **Test
 Runs** on the left. Its layout is fixed and does not change Monitor's pages.
 Starting a test from Studio still opens Monitor.
 
+![Report after the demo run with four SLO thresholds and a 5 s warmup: PASSED verdict band, SLO chips, key cards, timeline with the warmup band, failures, HTTP status and the slowest request](screenshots/guide/07-report.png)
+
 - **Verdict band**: **PASSED** / **FAILED** / **INCONCLUSIVE** from the SLO
   thresholds, or **COMPLETED**, **COMPLETED WITH ERRORS**, **CANCELLED** or
   **RUNNING** without them; the users, profile, duration, request and failure
