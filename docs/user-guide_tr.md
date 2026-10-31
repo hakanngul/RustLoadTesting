@@ -91,10 +91,10 @@ GL çalışma zamanı kütüphanelerini kurun. macOS'ta Xcode Command Line Tools
 
 ### Arayüzde ilk tur
 
-Üst çubukta üç çalışma alanı düğmesi var: **Studio**, **Studio 2** ve
-**Monitor**. Üçü de aynı plan ve aynı çalıştırma üzerinde çalışır; aralarında
-geçiş yapmak hiçbir testi başlatmaz ya da durdurmaz. Uygulama son kullandığınız
-çalışma alanını hatırlar.
+Üst çubukta üç çalışma alanı düğmesi (**Studio**, **Studio 2**, **Monitor**) ve
+**Report** bulunur. Hepsi aynı plan ve aynı çalıştırma üzerinde çalışır;
+aralarında geçiş yapmak hiçbir testi başlatmaz ya da durdurmaz. Uygulama son
+kullandığınızı hatırlar.
 
 Hemen altında araç çubuğu yer alır: **+ New**, **Open**, **Save**, **Save as…**,
 **Import…**, **Local Demo**, **▶ Run Test**, **■ Stop**, **Reset view**,
@@ -116,6 +116,8 @@ gelin) ve RustLoad'un kendi kullandığı CPU ile RAM'i gösterir.
   kalırsınız.
 - **Monitor** sonuçları gösterir: solda **Test Runs** listesi, sağda açık olan
   çalıştırma (canlı ya da geçmişten).
+- **Report** aynı açık çalıştırmayı sabit, salt okunur bir özet olarak gösterir
+  (bkz. [Report](#report)). Monitor'ü ve sayfalarını değiştirmez.
 
 ## 3. Uygulamalı başlangıç: Local Demo ile ilk test
 
@@ -507,6 +509,35 @@ sn ve veri hızı), **P95 Latency** ile **Error Rate** (tüm test) ve **Average
 Response Time** kartlarını, her birinde gerçek aralık verisinden çizilmiş küçük
 bir eğilim çizgisiyle gösterir; altında tamamlanan ve başarısız istek sayıları
 yer alır. Ağaçtaki **Summary Report** mevcut çalıştırmayı Monitor'de açar.
+
+### Report
+
+**Report** (üst çubukta Monitor'den sonra), Monitor'de açık olan çalıştırma için
+önce "geçti mi?", sonra "sorun nerede?" sorusunu yanıtlar; başka bir çalıştırma
+için soldaki **Test Runs** listesinden seçin. Düzeni sabittir ve Monitor
+sayfalarını değiştirmez. Studio'dan başlatılan test yine Monitor'ü açar.
+
+- **Sonuç bandı**: SLO eşiklerine göre **PASSED** / **FAILED** /
+  **INCONCLUSIVE**; eşik yoksa **COMPLETED**, **COMPLETED WITH ERRORS**,
+  **CANCELLED** ya da **RUNNING**. Kullanıcı, profil, süre, istek ve hata
+  sayıları ile warmup; her eşik için Pass/Fail ve ölçülen değeri gösteren bir
+  kutucuk.
+- **Dört kart**: Throughput (son 5 sn ve ölçüm penceresi ortalaması), P95 (tüm
+  istekler P95 SLO'sunun ne kadarını kullandığını gösteren çubukla), Hata oranı
+  (0'da yeşil, üstünde kırmızı) ve Sanal kullanıcı (test bitince ulaşılan tepe
+  değer). P50, P99, veri hızı, istek sayısı, warmup'ta hariç tutulanlar ve
+  düşürülen iterasyonlar alttaki şeritte yer alır.
+- **Zaman çizelgesi**: İstek/sn, yanıt süresi ve kullanıcı grafikleri aynı zaman
+  eksenini paylaşır. Birinde yakınlaştırma ya da imleç diğerlerini de taşır;
+  warmup gri bir banttır. Tüm istekler için P95 SLO'su (yoksa P99) yanıt süresi
+  grafiğinde kesikli çizgidir; veriden çok yukarıdaysa çizilmez, bir notla
+  belirtilir. Yakınlaştırma ve gizlenen seriler çalıştırma başına tutulur.
+- **Why did requests fail?** (hata yoksa "No failures", varsa en sık nedenler),
+  **HTTP status** ve P95'e göre **en yavaş istek**.
+- **Endpoints**: sıralamak için sütun başlığına tıklayın (üçgen yönü gösterir);
+  çubuk her P95'i en yavaş istekle karşılaştırır.
+- **Live Logs** tek satıra katlanmış olarak tutulan INFO/ERROR sayılarıyla
+  durur; **Show logs** açar, **Errors only** yalnızca hatalarla açar.
 
 ## 7. SLO eşikleri
 

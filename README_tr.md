@@ -167,6 +167,16 @@ değildir. Kullanıcı sayısı, süre, yük profili, RPS sınırı, think time,
 veya istek adımları farklı olan çalıştırmalar yine karşılaştırılır, ancak uyarı
 gösterilir. **Swap** baseline ile adayın yerini değiştirir.
 
+### Report
+
+Monitor'ün yanındaki **Report**, açık çalıştırmayı sabit bir özet olarak
+gösterir: her SLO ile PASSED/FAILED sonuç bandı, dört ana kart, istek hızı,
+gecikme ve kullanıcı grafiklerinin aynı zaman eksenini paylaştığı zaman
+çizelgesi (warmup gölgeli, SLO çizgili), hata nedenleri, HTTP durumu, en yavaş
+istek, sıralanabilir endpoint tablosu ve katlanmış log çekmecesi. Monitor
+düzenini değiştirmez. Ayrıntılar
+[kullanım rehberinde](docs/user-guide_tr.md#report).
+
 Uygulamanın tamamında koyu ve açık tema kullanılabilir. Açık temadaki
 [Studio](docs/screenshots/studio-light.png),
 [Studio 2](docs/screenshots/studio2-light.png) ve

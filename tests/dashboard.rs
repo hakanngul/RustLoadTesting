@@ -279,6 +279,14 @@ fn old_preferences_keep_studio2_layouts_and_gain_workspace_defaults() {
         Workspace::Studio.default_dashboards()
     );
     assert_eq!(prefs.workspace, Workspace::Studio2);
+    // Preferences saved before the Report view open on the normal workspace,
+    // and choosing Report survives a save and reload.
+    assert!(!prefs.report);
+    let mut with_report = prefs.clone();
+    with_report.report = true;
+    let restored: Preferences =
+        serde_json::from_str(&serde_json::to_string(&with_report).unwrap()).unwrap();
+    assert!(restored.report);
     // A fresh install gets every workspace's default set.
     let fresh = Preferences::default();
     for ws in Workspace::ALL {

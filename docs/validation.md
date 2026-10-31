@@ -1,5 +1,27 @@
 # Validation evidence
 
+## Report view
+
+A **Report** tab next to Monitor shows the run Monitor has open as a fixed,
+read-only summary built from the approved mock-up (verdict band, four key
+cards, secondary strip, linked timeline with warmup band and SLO line,
+failures, HTTP status, slowest request, sortable endpoint table, folded logs).
+Monitor's code path and pages are unchanged; Run from Studio still lands on
+Monitor. `Preferences.report` (serde default `false`) remembers the choice.
+
+- Test: `old_preferences_keep_studio2_layouts_and_gain_workspace_defaults` also checks
+  that older preferences load with Report off and that Report survives a save.
+- Native Linux/Xvfb: a live k6 Demo run (RUNNING band, SLOs currently
+  passing), the completed run from history (PASSED, 4 SLO chips, P95 SLO line,
+  warmup band, aligned axes), a Local Demo run without SLOs (COMPLETED, no SLO
+  line), Dark and Light, 1520×1040 and 900×720 (cards 2×2, chips wrap, table
+  scrolls inside), endpoint sorting, log drawer, zoom kept per run.
+- Found and fixed while checking: framed SLO chips did not wrap and widened
+  the page at 900 px; egui_plot's power-of-ten grid left a 0–900 ms axis with
+  one label (1-2-5 steps now); a zoom carried over to another run's report.
+
+Suite: **103 passed**. Format, strict all-target Clippy and build pass. Linux only.
+
 ## Chart reset, series toggles, widget expand and card fixes
 
 Reported from a real Monitor screen: a panned chart could not be brought back,

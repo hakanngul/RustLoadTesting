@@ -86,9 +86,10 @@ Tools (`xcode-select --install`).
 
 ### A first look around
 
-The top bar has three workspace buttons: **Studio**, **Studio 2** and
-**Monitor**. All three work on the same plan and the same run; switching never
-starts or stops anything. The app remembers the last workspace you used.
+The top bar has three workspace buttons, **Studio**, **Studio 2** and
+**Monitor**, plus **Report**. All of them work on the same plan and the same
+run; switching never starts or stops anything. The app remembers the last one
+you used.
 
 Below them is the toolbar: **+ New**, **Open**, **Save**, **Save as…**,
 **Import…**, **Local Demo**, **▶ Run Test**, **■ Stop**, **Reset view**,
@@ -110,6 +111,8 @@ to read all of it) and the CPU and RAM used by RustLoad itself.
   in Studio 2.
 - **Monitor** shows results: the **Test Runs** list on the left, and the run
   that is open (live or from history) on the right.
+- **Report** shows the same open run as a fixed, read-only summary (see
+  [Report](#report)). It does not change Monitor or its pages.
 
 ## 3. Tutorial: your first test with Local Demo
 
@@ -489,6 +492,35 @@ The **Live Metrics** widget on the right shows **Virtual Users**,
 **Error Rate** (whole run) and **Average Response Time**, each with a small
 trend line from the real interval data, followed by the completed and failed
 counts. **Summary Report** in the tree opens the current run in Monitor.
+
+### Report
+
+**Report** (top bar, after Monitor) answers "did it pass?" first and "where is
+the problem?" next, for the run Monitor has open; pick another run in **Test
+Runs** on the left. Its layout is fixed and does not change Monitor's pages.
+Starting a test from Studio still opens Monitor.
+
+- **Verdict band**: **PASSED** / **FAILED** / **INCONCLUSIVE** from the SLO
+  thresholds, or **COMPLETED**, **COMPLETED WITH ERRORS**, **CANCELLED** or
+  **RUNNING** without them; the users, profile, duration, request and failure
+  counts and the warmup; one chip per threshold with Pass/Fail and the measured
+  value.
+- **Four cards**: Throughput (last 5 s and the measured-window average), P95
+  (with a bar showing how much of the all-requests P95 SLO it uses), Error rate
+  (green at 0, red above) and Virtual users (peak reached once the run ends).
+  P50, P99, data rate, requests, warmup-excluded and dropped iterations sit in
+  the strip below.
+- **Timeline**: Requests/sec, response time and users share one time axis.
+  Zooming or hovering one chart moves the others; the warmup is a grey band.
+  The all-requests P95 SLO (else P99) is a dashed line on the response-time
+  chart unless it is far above the data, in which case a note names it. Zoom
+  and hidden series are kept per run.
+- **Why did requests fail?** ("No failures" when there are none, otherwise the
+  most frequent reasons), **HTTP status** and the **slowest request** by P95.
+- **Endpoints**: click a column title to sort (the triangle shows the order);
+  the bar compares each P95 with the slowest.
+- **Live Logs** stays folded to one line with the kept INFO/ERROR counts;
+  **Show logs** opens it and **Errors only** opens it filtered to errors.
 
 ## 7. SLO thresholds
 
