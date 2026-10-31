@@ -456,6 +456,11 @@ Bunların altındaki her şey yeniden düzenleyebileceğiniz bir widget sayfası
 **Grafikler** (x ekseni: geçen saniye; sürükleyerek kaydırın, tekerlekle
 yakınlaştırın)
 
+Her grafik serilerini başlığın yanında listeler; bir seriyi gizlemek ya da
+göstermek için adına veya noktasına tıklayın. Kaydırdıktan ya da
+yakınlaştırdıktan sonra başlık satırında **Reset zoom** belirir ve tüm testi
+yeniden gösterir (grafiğe çift tıklamak da aynı işi yapar).
+
 - **Requests per Second**: aralık başına **Total**, **Success** ve **Failed**
   tamamlanma; ilgiliyse **Warmup** ve **Target it/s** çizgileri.
 - **Response Time (ms) · interval percentiles**: her aralık için ayrı hesaplanan
@@ -705,6 +710,10 @@ ayrıdır: bir planı kaydetmek düzenleri içermez.
    kapattığınızda da kaydedilir.
 
 Alt ya da sağ panelin kenarını sürükleyerek boyutunu değiştirebilirsiniz.
+
+Fare bir widget'ın üzerindeyken (**Edit layout** dışında) sağ üst köşesinde
+**Expand** belirir. Widget'ı pencerenin ortasında büyük olarak, canlı şekilde
+açar; **Close**, Esc ya da dışarıya tıklama geri döndürür. Düzen değişmez.
 
 ### Widget ekleme ve sayfaları yönetme
 

@@ -1,5 +1,30 @@
 # Validation evidence
 
+## Chart reset, series toggles, widget expand and card fixes
+
+Reported from a real Monitor screen: a panned chart could not be brought back,
+legends covered the newest data, and "20.3 KiB/s" wrapped one character per
+line in its KPI card.
+
+- Charts (Requests per Second, Throughput, Response Time, Active Users,
+  Latency Distribution and the comparison charts) list their series next to
+  the title instead of an in-plot legend; clicking a name or dot hides or shows
+  it. **Reset zoom** appears after a pan or zoom; double-click still resets.
+- The Warmup series stops after its last completions instead of drawing zeros
+  over the rest of the run.
+- **Expand** (top-right of a tile on hover, not in Edit layout) opens the widget
+  in a centred modal at 90 % × 85 % of the window, live; Close, Esc or a click
+  outside closes it. Charts and logs fill it; cards and tables keep their
+  height. The button lives in its own layer so a widget's scroll area cannot
+  take its click, and hides when a window or menu covers the tile.
+- KPI and Studio 2 card values shrink to fit (down to 16 px, then ellipsis)
+  instead of wrapping.
+
+Native Linux/Xvfb with a real Local Demo run: zoomed Requests per Second to an
+empty 70–80 range, **Reset zoom** restored it; Expand on Response Time, KPI
+cards and Live Logs; Esc and outside-click close; Studio 2 right dock; Dark and
+Light. Suite: 103 passed; format, strict all-target Clippy and build pass.
+
 ## Status line moved into the header
 
 The status message and the load-generator CPU/RAM line moved from a bottom

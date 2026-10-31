@@ -90,6 +90,9 @@ bloke etme. Mevcut snapshot/persistence akışını inceleyerek geliştir.
   korunur. Çalışma sırasında düzen değiştirmek motoru veya test planını değiştirmez.
 - Mevcut sınırlar: 20 sayfa, sayfa başına 16 widget, 1–60 karakter benzersiz ad.
   Log filtreleme/follow birden fazla log widget'ı arasında şu an ortaktır.
+- Grafiklerde seriler başlık yanında aç/kapat düğmeleridir; kaydırma/yakınlaştırma
+  sonrası **Reset zoom** çıkar. **Expand** (fareyle üzerine gelince) widget'ı canlı
+  olarak ortada büyük bir modal'da açar; düzeni veya tercihleri değiştirmez.
 - Grafana benzeri yaklaşım kişisel sayfa ve widget düzenidir. Harici veri kaynağı,
   sorgu dili, plugin sistemi ve serbest piksel yerleşimi henüz uygulanmış değildir.
 
