@@ -378,6 +378,38 @@ impl RustLoadApp {
             fixture::K6_DEMO_ORIGIN
         );
     }
+    /// Status message and load-generator usage, shown under the engine label.
+    /// Long text is cut to the space left; hovering shows all of it.
+    fn status_lines(&self, ui: &mut egui::Ui, p: Palette) {
+        let tone = self
+            .message_tone
+            .as_ref()
+            .filter(|(_, text)| *text == self.message)
+            .map(|(tone, _)| *tone);
+        let text = RichText::new(&self.message).size(12.0);
+        ui.add(
+            egui::Label::new(match tone {
+                None => text.color(p.muted),
+                Some(tone) => text.strong().color(tone_color(tone, p)),
+            })
+            .truncate(),
+        );
+        let usage = format!(
+            "Load generator · CPU {:.1}% (one core = 100%) · RAM {:.1} MiB",
+            self.cpu,
+            self.memory as f64 / 1_048_576.0
+        );
+        let cores = std::thread::available_parallelism().map_or(1, usize::from) as f32;
+        let usage = if self.memory > 1024 * 1024 * 1024 || self.cpu > cores * 90.0 {
+            RichText::new(format!(
+                "{usage} · Local capacity warning: results may be generator-limited"
+            ))
+            .color(p.warning)
+        } else {
+            RichText::new(usage).color(p.muted)
+        };
+        ui.add(egui::Label::new(usage.size(11.0)).truncate());
+    }
     fn toolbar(&mut self, ctx: &egui::Context, p: Palette) {
         let busy = self.busy();
         egui::TopBottomPanel::top("toolbar")
@@ -423,23 +455,31 @@ impl RustLoadApp {
                             }
                         }
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(if self.prefs.light {
-                                "☾ Dark"
-                            } else {
-                                "☀ Light"
-                            })
-                            .clicked()
-                        {
-                            self.prefs.light = !self.prefs.light;
-                            theme::apply(ctx, !self.prefs.light);
-                        }
-                        ui.label(
-                            RichText::new("Local Engine  ·  v0.1.0")
-                                .color(p.success)
-                                .size(12.0),
-                        );
+                    // Right-aligned: engine label and theme switch, then the status
+                    // message and load-generator usage right under them.
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        let row = egui::vec2(ui.available_width(), 28.0);
+                        let right = egui::Layout::right_to_left(egui::Align::Center);
+                        ui.allocate_ui_with_layout(row, right, |ui| {
+                            if ui
+                                .button(if self.prefs.light {
+                                    "☾ Dark"
+                                } else {
+                                    "☀ Light"
+                                })
+                                .clicked()
+                            {
+                                self.prefs.light = !self.prefs.light;
+                                theme::apply(ctx, !self.prefs.light);
+                            }
+                            ui.label(
+                                RichText::new("Local Engine  ·  v0.1.0")
+                                    .color(p.success)
+                                    .size(12.0),
+                            );
+                        });
+                        self.status_lines(ui, p);
                     });
                 });
                 ui.add_space(8.0);
@@ -1255,39 +1295,10 @@ impl eframe::App for RustLoadApp {
             }
         }
         let p = theme::palette(!self.prefs.light);
+        // The status line is drawn in the header, before most of the frame
+        // runs; a message set later in the frame needs one more repaint.
+        let shown = self.message.clone();
         self.toolbar(ctx, p);
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                let tone = self
-                    .message_tone
-                    .as_ref()
-                    .filter(|(_, text)| *text == self.message)
-                    .map(|(tone, _)| *tone);
-                let text = RichText::new(&self.message).size(12.0);
-                ui.label(match tone {
-                    None => text.color(p.muted),
-                    Some(tone) => text.strong().color(tone_color(tone, p)),
-                });
-            });
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "Load generator · CPU {:.1}% (one core = 100%) · RAM {:.1} MiB",
-                        self.cpu,
-                        self.memory as f64 / 1_048_576.0
-                    ))
-                    .size(11.0)
-                    .color(p.muted),
-                );
-                let cores = std::thread::available_parallelism().map_or(1, usize::from) as f32;
-                if self.memory > 1024 * 1024 * 1024 || self.cpu > cores * 90.0 {
-                    ui.colored_label(
-                        p.warning,
-                        "Local capacity warning: results may be generator-limited",
-                    );
-                }
-            });
-        });
         match self.workspace {
             Workspace::Studio => {
                 self.sidebar(ctx, p);
@@ -1311,6 +1322,9 @@ impl eframe::App for RustLoadApp {
                 self.message = "Persistent UI storage is unavailable in this session.".into();
             }
             self.layout_save_requested = false;
+        }
+        if self.message != shown {
+            ctx.request_repaint();
         }
         ctx.request_repaint_after(Duration::from_millis(if self.busy() { 100 } else { 500 }));
     }
