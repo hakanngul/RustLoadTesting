@@ -965,3 +965,31 @@ fn saved_plans_load_and_bad_files_are_refused() {
         .unwrap();
     assert!(TestPlan::load(&big).unwrap_err().contains("16 MiB"));
 }
+
+#[test]
+fn k6_demo_plan_is_valid_and_keeps_its_token_out_of_saved_plans() {
+    let base = std::path::Path::new(".");
+    let plan = rustload::fixture::k6_demo_plan("0123456789abcdef");
+    plan.validate(base).unwrap();
+    assert!(
+        plan.requests
+            .iter()
+            .all(|r| r.url.starts_with(rustload::fixture::K6_DEMO_ORIGIN)
+                && r.assertions.status == Some(200)
+                && r.assertions.max_ms.is_some())
+    );
+    assert_eq!(plan.requests[2].assertions.json_pointer, "/doughs/0/name");
+    assert_eq!(plan.requests[3].extractors[0].variable, "pizza_name");
+    assert_eq!(plan.thresholds.len(), 4);
+    assert_eq!(plan.load.warmup, Warmup::Duration { secs: 10 });
+    let json = serde_json::to_string(&plan).unwrap();
+    assert!(!json.contains("0123456789abcdef"));
+    assert!(json.contains("{{pizza_token}}"));
+    assert!(json.contains("maxCaloriesPerSlice"));
+    // Reopened from disk, the secret token must be entered again.
+    let restored: TestPlan = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        restored.validate(base).unwrap_err(),
+        "Plan variables: Re-enter secret value: pizza_token"
+    );
+}

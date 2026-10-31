@@ -358,6 +358,26 @@ impl RustLoadApp {
         self.acknowledged = false;
         self.message="Local fixture started on loopback. Scenario: login -> token extraction -> products -> checkout. Review and authorize, then Run.".into();
     }
+    /// Loads the k6 QuickPizza demo plan with a fresh random demo API token.
+    fn k6_demo(&mut self) {
+        use std::hash::{BuildHasher, Hasher};
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+        );
+        self.plan = fixture::k6_demo_plan(&format!("{:016x}", hasher.finish()));
+        self.prefs.plan_path.clear();
+        self.selected = 0;
+        self.dirty = true;
+        self.acknowledged = false;
+        self.message = format!(
+            "k6 Demo loaded: {} (internet required). Review and authorize, then Run.",
+            fixture::K6_DEMO_ORIGIN
+        );
+    }
     fn toolbar(&mut self, ctx: &egui::Context, p: Palette) {
         let busy = self.busy();
         egui::TopBottomPanel::top("toolbar")
@@ -475,6 +495,15 @@ impl RustLoadApp {
                             .clicked()
                         {
                             self.local_demo();
+                        }
+                        if ui
+                            .add_enabled(!self.dirty, egui::Button::new("k6 Demo"))
+                            .on_hover_text(
+                                "Grafana k6's public QuickPizza demo API: 4 requests with assertions, extraction, warmup and SLOs. Needs internet. Save or discard your current changes first.",
+                            )
+                            .clicked()
+                        {
+                            self.k6_demo();
                         }
                     });
                     ui.separator();

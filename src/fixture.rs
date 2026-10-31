@@ -205,3 +205,99 @@ pub fn demo_plan(address: SocketAddr) -> crate::core::TestPlan {
         ..TestPlan::default()
     }
 }
+
+/// Public demo API that Grafana k6 provides for load-test practice.
+pub const K6_DEMO_ORIGIN: &str = "https://quickpizza.grafana.com";
+
+/// Ready-made plan for Grafana k6's public QuickPizza demo: four requests with
+/// status, response-time and JSON assertions, an extraction, warmup and SLOs.
+/// QuickPizza accepts any 16-character API token; `token` is kept in a secret
+/// variable, so it is never written to saved plans.
+pub fn k6_demo_plan(token: &str) -> crate::core::TestPlan {
+    use crate::core::*;
+    let auth = vec![Field {
+        name: "Authorization".into(),
+        value: "{{pizza_token}}".into(),
+        secret: true,
+    }];
+    let checked = |status: u16, max_ms: u64| Assertions {
+        status: Some(status),
+        max_ms: Some(max_ms),
+        ..Assertions::default()
+    };
+    let home = Request {
+        id: 1,
+        name: "Home".into(),
+        url: format!("{K6_DEMO_ORIGIN}/"),
+        assertions: checked(200, 1000),
+        ..Request::default()
+    };
+    let quotes = Request {
+        id: 2,
+        name: "Quotes".into(),
+        url: format!("{K6_DEMO_ORIGIN}/api/quotes"),
+        assertions: checked(200, 1000),
+        ..Request::default()
+    };
+    let doughs = Request {
+        id: 3,
+        name: "Doughs".into(),
+        url: format!("{K6_DEMO_ORIGIN}/api/doughs"),
+        headers: auth.clone(),
+        assertions: Assertions {
+            json_pointer: "/doughs/0/name".into(),
+            json_expected: r#""Thin""#.into(),
+            ..checked(200, 1000)
+        },
+        ..Request::default()
+    };
+    let recommend = Request {
+        id: 4,
+        name: "Recommend pizza".into(),
+        method: "POST".into(),
+        url: format!("{K6_DEMO_ORIGIN}/api/pizza"),
+        headers: auth,
+        body: Body {
+            text: r#"{"maxCaloriesPerSlice":1000,"mustBeVegetarian":false,"excludedIngredients":[],"excludedTools":[],"maxNumberOfToppings":5,"minNumberOfToppings":2}"#.into(),
+            json: true,
+            persist: true,
+        },
+        assertions: checked(200, 1500),
+        extractors: vec![Extractor {
+            variable: "pizza_name".into(),
+            pointer: "/pizza/name".into(),
+        }],
+        ..Request::default()
+    };
+    let threshold = |metric, value| Threshold {
+        metric,
+        value,
+        request_id: None,
+    };
+    TestPlan {
+        name: "k6 Demo · QuickPizza".into(),
+        variables: vec![Field {
+            name: "pizza_token".into(),
+            value: format!("token {token}"),
+            secret: true,
+        }],
+        requests: vec![home, quotes, doughs, recommend],
+        load: LoadConfig {
+            users: 10,
+            duration_secs: 70,
+            ramp_secs: 10,
+            profile: Profile::RampUp,
+            rps_limit: 20,
+            think_ms: 1000,
+            warmup: Warmup::Duration { secs: 10 },
+            ..LoadConfig::default()
+        },
+        thresholds: vec![
+            threshold(SloMetric::P95, 800.0),
+            threshold(SloMetric::P99, 1500.0),
+            threshold(SloMetric::ErrorRate, 1.0),
+            threshold(SloMetric::Throughput, 10.0),
+        ],
+        ..TestPlan::default()
+    }
+}

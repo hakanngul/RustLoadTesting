@@ -52,7 +52,7 @@ yalnızca gerekli soruyu sor. Son kullanıcı talimatı bu rehberden önceliklid
 | `src/ui/studio2.rs` | Alternatif Studio 2 çalışma alanı |
 | `src/dashboard.rs` | Serileştirilebilir sayfa/widget düzen modeli |
 | `src/ui/dashboard.rs` | Widget kataloğu, düzenleme, dock ve dashboard çizimi |
-| `src/fixture.rs` | Gerçek localhost test sunucusu ve demo senaryosu |
+| `src/fixture.rs` | Gerçek localhost test sunucusu, Local Demo ve k6 Demo (QuickPizza) planları |
 | `tests/` | Model/rapor, dashboard ve gerçek HTTP entegrasyon kontrolleri |
 
 HTTP motoru egui'ye veya render döngüsüne bağlı olamaz. UI yavaşladığında istekler

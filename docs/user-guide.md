@@ -151,6 +151,21 @@ open it after a restart, its port is gone and requests fail with
 `cargo run --locked --example fixture` in a terminal (it listens on
 `127.0.0.1:8080` until Ctrl-C) and point the request URLs there.
 
+### k6 Demo (internet)
+
+**k6 Demo** loads a ready plan for Grafana k6's public QuickPizza demo API at
+`https://quickpizza.grafana.com`, which is published for load-test practice:
+Home, Quotes, Doughs and Recommend pizza (POST with a JSON body), each with
+expected status 200 and a response-time limit; Doughs also checks
+`/doughs/0/name` is `"Thin"` and Recommend pizza extracts `/pizza/name`. Load:
+Ramp-up Users, 10 users, 10 s ramp-up, 70 s total with a 10 s warmup, RPS cap 20,
+1 s think time. SLOs: P95 ≤ 800 ms, P99 ≤ 1500 ms, error rate ≤ 1 %, throughput
+≥ 10 req/s. The demo API token is generated at random in the secret variable
+`pizza_token` (QuickPizza accepts any 16-character token), so a saved copy asks
+for it again: enter `token ` followed by any 16 letters or digits, or click
+**k6 Demo** again. It is a shared public service: keep the load modest and tick
+the authorization box only if you accept its terms.
+
 ## 4. Building scenarios
 
 ### Requests
