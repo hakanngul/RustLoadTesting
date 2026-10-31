@@ -159,6 +159,23 @@ yeniden başlattıktan sonra açarsanız eski port artık yoktur ve istekler
 `cargo run --locked --example fixture` çalıştırın (Ctrl-C'ye kadar
 `127.0.0.1:8080`'i dinler) ve istek URL'lerini bu adrese çevirin.
 
+### k6 Demo (internet)
+
+**k6 Demo**, Grafana k6'nın yük testi alıştırması için yayınladığı herkese açık
+QuickPizza demo API'si (`https://quickpizza.grafana.com`) için hazır bir plan
+yükler: Home, Quotes, Doughs ve Recommend pizza (JSON gövdeli POST). Her istek
+200 durum kodu ve yanıt süresi sınırıyla kontrol edilir; Doughs ayrıca
+`/doughs/0/name` değerinin `"Thin"` olduğunu doğrular, Recommend pizza
+`/pizza/name` değerini çıkarır. Yük: Ramp-up Users, 10 kullanıcı, 10 sn
+ramp-up, 10 sn warmup dahil toplam 70 sn, RPS sınırı 20, 1 sn think time.
+SLO'lar: P95 ≤ 800 ms, P99 ≤ 1500 ms, hata oranı ≤ %1, throughput ≥ 10 req/s.
+Demo API token'ı gizli `pizza_token` değişkeninde rastgele üretilir (QuickPizza
+16 karakterlik her token'ı kabul eder); bu yüzden kaydedilmiş bir kopya token'ı
+yeniden ister: `token ` ve ardından herhangi 16 harf veya rakam girin ya da
+**k6 Demo**'ya yeniden tıklayın. Ortak kullanılan bir servis olduğu için yükü
+makul tutun ve yetki kutusunu yalnızca kullanım koşullarını kabul ediyorsanız
+işaretleyin.
+
 ## 4. Senaryo oluşturma
 
 ### İstekler

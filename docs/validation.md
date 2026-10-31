@@ -1,5 +1,26 @@
 # Validation evidence
 
+## k6 Demo preset
+
+**k6 Demo** (toolbar, next to **Local Demo**) loads a ready plan for Grafana
+k6's public QuickPizza demo API: 4 requests with status and response-time
+assertions, a JSON value check, an extraction, warmup and 4 SLOs. The API token
+is random per load and lives in the secret `pizza_token` variable, so it never
+reaches saved plans, history or Git. `test.k6.io` was not used: it now answers
+every page with a 302 redirect to QuickPizza, which RustLoad does not follow.
+
+- `k6_demo_plan_is_valid_and_keeps_its_token_out_of_saved_plans`: the plan
+  validates; the token is not serialized, `{{pizza_token}}` is; a reopened copy
+  asks for the token again.
+- Real traffic (not in CI): 1 user for 6 s gave 20/20 HTTP 200 with every
+  assertion and the extraction passing. Native Linux/Xvfb: clicked **k6 Demo**,
+  authorized and ran for 22 s (10 users after ramp-up): 239 measured requests,
+  142 excluded by warmup, 0 errors, all four SLOs passing; **Stop** gave
+  "Run Cancelled · 257 completed · 0 failed · SLO Passed (partial run)". The
+  toolbar wraps cleanly at 900×720.
+
+Suite: **103 passed**. Format, strict all-target Clippy and build pass.
+
 ## Validation feedback and Studio 2 layout fixes
 
 Reported from a real session: **Validate plan** seemed to do nothing (the

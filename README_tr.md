@@ -106,6 +106,11 @@ Test sunucusu Ctrl-C ile kapatılana kadar `127.0.0.1:8080` adresinde dinler.
 Plandaki istek URL'lerini bu adrese göre değiştirin. Kendi testlerinizde yalnızca
 test etme izniniz olan hedefleri kullanın.
 
+**k6 Demo**, Grafana k6'nın herkese açık QuickPizza demo API'si
+(`https://quickpizza.grafana.com`) için assertion, extraction, warmup ve SLO
+içeren hazır bir plan yükler. İnternet gerekir; ayrıntılar
+[kullanım rehberinde](docs/user-guide_tr.md#k6-demo-internet).
+
 ## Çalışma alanları
 
 ### Studio

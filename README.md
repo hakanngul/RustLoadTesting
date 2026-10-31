@@ -100,6 +100,10 @@ cargo run --locked --example fixture
 The fixture listens on `127.0.0.1:8080` until Ctrl-C. Update the plan's request URLs
 to use that address. For your own tests, use targets you have permission to test.
 
+**k6 Demo** loads a ready plan with assertions, extraction, warmup and SLOs for
+Grafana k6's public QuickPizza demo API (`https://quickpizza.grafana.com`). It
+needs internet; see the [user guide](docs/user-guide.md#k6-demo-internet).
+
 ## Workspaces
 
 ### Studio
